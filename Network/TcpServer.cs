@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -41,6 +45,17 @@ public class TcpServer
     private readonly ConcurrentDictionary<string, TcpClient> _clients = new();
 
     /// <summary>
+    /// Diccionario público que asocia cada <see cref="TcpClient"/> con su <see cref="SslStream"/> desencriptado.
+    /// Útil para acceder al stream seguro desde otras partes del código sin llamar a GetStream() (que devolvería el stream crudo).
+    /// </summary>
+    public readonly ConcurrentDictionary<TcpClient, Stream> SecureStreams = new();
+
+    /// <summary>
+    /// El certificado de encriptación autofirmado generado en memoria.
+    /// </summary>
+    private readonly X509Certificate2 _serverCert;
+
+    /// <summary>
     /// Si true, cada cliente debe pasar el handshake antes de que se dispare
     /// <see cref="OnClientAsync"/>. Se setea por constructor.
     /// </summary>
@@ -56,7 +71,7 @@ public class TcpServer
     /// Callback que implementás vos. Recibe el <see cref="TcpClient"/> ya autenticado
     /// (si <see cref="EnableAuth"/> es true). Armás tu loop de lectura/escritura con tu protocolo.
     /// </summary>
-    public Func<TcpClient, Task> OnClientAsync;
+    public Func<TcpClient, Stream, Task> OnClientAsync;
 
     /// <summary>
     /// Se dispara cuando un cliente pasa el handshake (o conecta, si <see cref="EnableAuth"/> es false).
@@ -75,6 +90,11 @@ public class TcpServer
     public event Action<string> OnError;
 
     /// <summary>
+    /// Se dispara cuando la autenticacion esta activa y falla al autenticar.
+    /// </summary>
+    public event Action<TcpClient> OnAuthFail;
+
+    /// <summary>
     /// Crea un nuevo servidor.
     /// </summary>
     /// <param name="ip">IP donde escuchar.</param>
@@ -84,6 +104,9 @@ public class TcpServer
     {
         _listener = new TcpListener(ip, port);
         EnableAuth = enableAuth;
+
+        // Generar certificado autofirmado al nacer la clase
+        _serverCert = GenerateSelfSignedCert();
     }
 
     /// <summary>
@@ -161,26 +184,34 @@ public class TcpServer
     private async Task HandleClientAsync(TcpClient client)
     {
         string ip = client.Client.RemoteEndPoint?.ToString() ?? "?";
-
-        // Handshake antes de registrar al cliente o avisar que conectó.
-        // Si falla, cerrar y chau — sin OnClientConnected, sin OnError, sin nada.
-        if (EnableAuth)
-        {
-            if (!DoHandshake(client))
-            {
-                try { client.Close(); } catch { }
-                return;
-            }
-        }
-
-        _clients[ip] = client;
         client.NoDelay = true;
-        OnClientConnected?.Invoke(ip);
 
         try
         {
+            // 1. OBTENER STREAM Y ENVOLVERLO EN TLS
+            var networkStream = client.GetStream();
+            var sslStream = new SslStream(networkStream, false);
+
+            // Autenticar como servidor (bloquea hasta que el cliente hace el handshake TLS)
+            await sslStream.AuthenticateAsServerAsync(_serverCert, false, SslProtocols.Tls12 | SslProtocols.Tls13, false);
+
+            // Handshake antes de registrar al cliente o avisar que conectó.
+            // Si falla, cerrar y chau — sin OnClientConnected, sin OnError, sin nada.
+            if (EnableAuth)
+            {
+                if (!DoHandshake(client, sslStream))
+                {
+                    try { client.Close(); } catch { }
+                    return;
+                }
+            }
+
+            _clients[ip] = client;
+            SecureStreams[client] = sslStream;
+            OnClientConnected?.Invoke(ip);
+
             if (OnClientAsync != null)
-                await OnClientAsync(client);
+                await OnClientAsync(client, sslStream);
         }
         catch (Exception ex)
         {
@@ -191,6 +222,7 @@ public class TcpServer
         {
             try { client.Close(); } catch { }
             _clients.TryRemove(ip, out _);
+            SecureStreams.TryRemove(client, out _);
             OnClientDisconnected?.Invoke(ip);
         }
     }
@@ -203,12 +235,13 @@ public class TcpServer
     ///   3. Server valida. Si OK → manda 1 byte 0x01. Si NO OK → cierra sin mandar nada.
     /// Timeout: 5s para que el cliente mande la respuesta.
     /// </summary>
-    private bool DoHandshake(TcpClient client)
+    /// <param name="client">El TcpClient para setear el ReceiveTimeout.</param>
+    /// <param name="stream">El SslStream ya encriptado sobre el que leer y escribir.</param>
+    /// <returns>True si la autenticación fue exitosa.</returns>
+    private bool DoHandshake(TcpClient client, Stream stream)
     {
-        NetworkStream stream = null;
         try
         {
-            stream = client.GetStream();
             client.ReceiveTimeout = 5000;
 
             // 1. Generar y mandar challenge (16 bytes random)
@@ -234,6 +267,7 @@ public class TcpServer
             if (!ok)
             {
                 client.ReceiveTimeout = 0;
+                OnAuthFail?.Invoke(client);
                 return false;
             }
 
@@ -246,7 +280,21 @@ public class TcpServer
         {
             // Timeout, socket cerrado, lo que sea → auth falló, cerrar silenciosamente
             try { if (stream != null) stream.ReadTimeout = 0; } catch { }
+            OnAuthFail?.Invoke(client);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Genera un certificado X509 autofirmado en memoria usando RSA 2048.
+    /// No requiere archivos en disco y es válido por 1 año.
+    /// </summary>
+    /// <returns>Un <see cref="X509Certificate2"/> listo para usar con SslStream.</returns>
+    private static X509Certificate2 GenerateSelfSignedCert()
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=AudioRouterPC", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        // Válido por 1 año
+        return req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
     }
 }

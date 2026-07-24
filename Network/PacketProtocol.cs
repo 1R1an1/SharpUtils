@@ -1,7 +1,6 @@
 using System;
 using System.Buffers.Binary;
 using System.IO;
-using System.Net.Sockets;
 using System.Text;
 
 namespace SharpUtils.Network;
@@ -10,7 +9,7 @@ public enum Endianness { Little, Big }
 public enum LengthSize { Int32, Int64 }
 
 /// <summary>
-/// Helpers estáticos para leer y escribir tipos básicos sobre un <see cref="NetworkStream"/>,
+/// Helpers estáticos para leer y escribir tipos básicos sobre un <see cref="Stream"/>,
 /// respetando endianness y tamaño de length configurables.
 /// </summary>
 /// <remarks>
@@ -23,11 +22,11 @@ public enum LengthSize { Int32, Int64 }
 /// <code>
 /// public static class MiProtocolo
 /// {
-///     public static void Send(NetworkStream s, string msg)
+///     public static void Send(Stream s, string msg)
 ///     {
 ///         lock (s) PacketProtocol.WriteString(s, msg);
 ///     }
-///     public static string Read(NetworkStream s) => PacketProtocol.ReadString(s);
+///     public static string Read(Stream s) => PacketProtocol.ReadString(s);
 /// }
 /// </code>
 /// </example>
@@ -53,7 +52,7 @@ public static class PacketProtocol
     /// Es internal porque es un detalle de implementación. Los métodos públicos
     /// (<see cref="ReadInt"/>, <see cref="ReadString"/>, <see cref="ReadBytes"/>) lo usan internamente.
     /// </remarks>
-    internal static void ReadExact(NetworkStream stream, Span<byte> buffer)
+    internal static void ReadExact(Stream stream, Span<byte> buffer)
     {
         int total = 0;
         while (total < buffer.Length)
@@ -70,7 +69,7 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream destino. Escribe directo, no acumula en memoria.</param>
     /// <param name="value">Valor a escribir. Si <see cref="Length"/> es Int32 se trunca a 32 bits.</param>
-    public static void WriteInt(NetworkStream stream, long value)
+    public static void WriteInt(Stream stream, long value)
     {
         if (Length == LengthSize.Int32)
         {
@@ -93,7 +92,7 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream del cual leer.</param>
     /// <returns>El valor leído como long (cabe tanto Int32 como Int64).</returns>
-    public static long ReadInt(NetworkStream stream)
+    public static long ReadInt(Stream stream)
     {
         if (Length == LengthSize.Int32)
         {
@@ -119,7 +118,7 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream destino.</param>
     /// <param name="str">String a escribir. El largo respeta la config <see cref="Length"/> (4 u 8 bytes).</param>
-    public static void WriteString(NetworkStream stream, string str)
+    public static void WriteString(Stream stream, string str)
     {
         byte[] data = Encoding.UTF8.GetBytes(str);
         WriteInt(stream, data.Length);
@@ -131,7 +130,7 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream del cual leer.</param>
     /// <returns>El string leído.</returns>
-    public static string ReadString(NetworkStream stream)
+    public static string ReadString(Stream stream)
     {
         long len = ReadInt(stream);
         byte[] data = new byte[len];
@@ -145,7 +144,7 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream destino.</param>
     /// <param name="data">Bytes a escribir. El largo respeta la config <see cref="Length"/>.</param>
-    public static void WriteBytes(NetworkStream stream, ReadOnlyMemory<byte> data)
+    public static void WriteBytes(Stream stream, ReadOnlyMemory<byte> data)
     {
         WriteInt(stream, data.Length);
         stream.Write(data.Span);
@@ -156,7 +155,7 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream del cual leer.</param>
     /// <returns>Los bytes leídos.</returns>
-    public static byte[] ReadBytes(NetworkStream stream)
+    public static byte[] ReadBytes(Stream stream)
     {
         long len = ReadInt(stream);
         byte[] data = new byte[len];

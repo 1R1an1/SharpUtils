@@ -45,8 +45,8 @@ public class TcpServer
     private readonly ConcurrentDictionary<string, TcpClient> _clients = new();
 
     /// <summary>
-    /// Diccionario público que asocia cada <see cref="TcpClient"/> con su <see cref="SslStream"/> desencriptado.
-    /// Útil para acceder al stream seguro desde otras partes del código sin llamar a GetStream() (que devolvería el stream crudo).
+    /// Diccionario público que asocia cada <see cref="TcpClient"/> con su <see cref="Stream"/> (SslStream) desencriptado.
+    /// Solo se llena si <see cref="EnableTLS"/> es true. Útil para acceder al stream seguro desde otras partes del código.
     /// </summary>
     public readonly ConcurrentDictionary<TcpClient, Stream> SecureStreams = new();
 
@@ -60,6 +60,12 @@ public class TcpServer
     /// <see cref="OnClientAsync"/>. Se setea por constructor.
     /// </summary>
     public bool EnableAuth { get; }
+
+    /// <summary>
+    /// Si true (default), la conexión se envuelve en un <see cref="SslStream"/> para encriptar el tráfico (TLS).
+    /// Si false, los datos viajan en plano sobre el <see cref="NetworkStream"/>.
+    /// </summary>
+    public bool EnableTLS { get; }
 
     /// <summary>
     /// Password usada por el handshake. Por defecto es <see cref="DefaultPassword"/>.
@@ -99,14 +105,17 @@ public class TcpServer
     /// </summary>
     /// <param name="ip">IP donde escuchar.</param>
     /// <param name="port">Puerto donde escuchar.</param>
+    /// <param name="enableTLS">Si true (default), encripta la conexión usando TLS con un certificado autofirmado en memoria.</param>
     /// <param name="enableAuth">Si true (default), exige handshake a cada cliente.</param>
-    public TcpServer(IPAddress ip, int port, bool enableAuth = true)
+    public TcpServer(IPAddress ip, int port, bool enableTLS = true, bool enableAuth = true)
     {
         _listener = new TcpListener(ip, port);
         EnableAuth = enableAuth;
+        EnableTLS = enableTLS;
 
-        // Generar certificado autofirmado al nacer la clase
-        _serverCert = GenerateSelfSignedCert();
+        // Generar certificado autofirmado al nacer la clase si TLS está activado
+        if (enableTLS)
+            _serverCert = GenerateSelfSignedCert();
     }
 
     /// <summary>
@@ -188,18 +197,21 @@ public class TcpServer
 
         try
         {
-            // 1. OBTENER STREAM Y ENVOLVERLO EN TLS
             var networkStream = client.GetStream();
-            var sslStream = new SslStream(networkStream, false);
+            Stream stream = networkStream;
 
-            // Autenticar como servidor (bloquea hasta que el cliente hace el handshake TLS)
-            await sslStream.AuthenticateAsServerAsync(_serverCert, false, SslProtocols.Tls12 | SslProtocols.Tls13, false);
+            if (EnableTLS)
+            {
+                stream = new SslStream(networkStream, false);
+                // Autenticar como servidor (bloquea hasta que el cliente hace el handshake TLS)
+                await (stream as SslStream).AuthenticateAsServerAsync(_serverCert, false, SslProtocols.Tls12 | SslProtocols.Tls13, false);
+            }
 
             // Handshake antes de registrar al cliente o avisar que conectó.
             // Si falla, cerrar y chau — sin OnClientConnected, sin OnError, sin nada.
             if (EnableAuth)
             {
-                if (!DoHandshake(client, sslStream))
+                if (!DoHandshake(client, stream))
                 {
                     try { client.Close(); } catch { }
                     return;
@@ -207,11 +219,14 @@ public class TcpServer
             }
 
             _clients[ip] = client;
-            SecureStreams[client] = sslStream;
+
+            if (EnableTLS)
+                SecureStreams[client] = stream;
+
             OnClientConnected?.Invoke(ip);
 
             if (OnClientAsync != null)
-                await OnClientAsync(client, sslStream);
+                await OnClientAsync(client, stream);
         }
         catch (Exception ex)
         {
@@ -222,7 +237,10 @@ public class TcpServer
         {
             try { client.Close(); } catch { }
             _clients.TryRemove(ip, out _);
-            SecureStreams.TryRemove(client, out _);
+
+            if (EnableTLS)
+                SecureStreams.TryRemove(client, out _);
+
             OnClientDisconnected?.Invoke(ip);
         }
     }

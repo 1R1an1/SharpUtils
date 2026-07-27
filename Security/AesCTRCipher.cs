@@ -14,7 +14,11 @@ public class AesCTRCipher
     private readonly byte[] _key;
     private readonly byte[] _baseIv;
     private readonly ICryptoTransform _ecbEncryptor;
-    private long _currentSequence = 0; // El contador interno que la clase maneja sola
+    private ulong _currentSequence = 0; // El contador interno que la clase maneja sola
+
+    // NUEVO: Arrays reutilizables. Se piden a la memoria UNA SOLA VEZ al crear la clase.
+    private readonly byte[] _counterBuffer;
+    private readonly byte[] _keystreamBuffer;
 
     public AesCTRCipher(byte[] password, byte[] iv)
     {
@@ -23,6 +27,9 @@ public class AesCTRCipher
         _key = new byte[32];
         SHA256.HashData(password, _key);
         _baseIv = (byte[])iv.Clone();
+
+        _counterBuffer = new byte[16];
+        _keystreamBuffer = new byte[16];
 
         using var aes = Aes.Create();
         aes.Key = _key;
@@ -42,7 +49,7 @@ public class AesCTRCipher
         byte[] paqueteFinal = new byte[4 + audioPlano.Length];
 
         // 1. Escribimos el número de secuencia actual al principio (Big-Endian)
-        BinaryPrimitives.WriteInt32BigEndian(paqueteFinal, (int)_currentSequence);
+        BinaryPrimitives.WriteUInt32BigEndian(paqueteFinal, (uint)_currentSequence);
 
         // 2. Encriptamos el audio directamente en el resto del paquete
         ProcessCtr(audioPlano, paqueteFinal.AsSpan(4), _currentSequence);
@@ -61,7 +68,7 @@ public class AesCTRCipher
         if (paqueteRecibido.Length < 4) return Array.Empty<byte>();
 
         // 1. Leemos el ticket de red
-        int seqRecibida = BinaryPrimitives.ReadInt32BigEndian(paqueteRecibido);
+        uint seqRecibida = BinaryPrimitives.ReadUInt32BigEndian(paqueteRecibido);
 
         // 2. Desencriptamos SIEMPRE usando el ticket de este paquete específico
         // (Así da igual si llegó desordenado, el AES-CTR lo resuelve)
@@ -81,33 +88,32 @@ public class AesCTRCipher
     /// <summary>
     /// El motor CTR puro. Calcula el bloque inicial basándose en el número de secuencia.
     /// </summary>
-    private void ProcessCtr(ReadOnlySpan<byte> input, Span<byte> output, long seq)
+    private void ProcessCtr(ReadOnlySpan<byte> input, Span<byte> output, ulong seq)
     {
-        Span<byte> counter = stackalloc byte[16];
-        _baseIv.AsSpan().CopyTo(counter);
+        // Clonamos el IV base a un array normal para poder modificarlo
+        _baseIv.AsSpan().CopyTo(_counterBuffer);
 
-        // Calculamos en qué bloque del contador estamos. 
-        // Si cada paquete tiene 4096 bytes, cada paquete avanza 256 bloques (4096 / 16).
-        long startBlock = seq * (input.Length / 16);
+        // Calculamos en qué bloque del contador estamos.
+        ulong startBlock = seq * (ulong)(input.Length / 16);
 
-        // Sumamos ese startBlock al contador base
-        BinaryPrimitives.WriteInt64BigEndian(counter.Slice(8), startBlock);
-
-        Span<byte> keystream = stackalloc byte[16];
-        byte[] counterArray = counter.ToArray(); // ECB de .NET a veces pide array
+        // Sumamos ese startBlock al contador (escribimos en los últimos 8 bytes en formato Big-Endian)
+        BinaryPrimitives.WriteUInt64BigEndian(_counterBuffer.AsSpan(8), startBlock);
 
         int i = 0;
         while (i < input.Length)
         {
-            _ecbEncryptor.TransformBlock(counterArray, 0, 16, keystream.ToArray(), 0);
+            // 1. Encryptar el contador actual directamente en el array keystream
+            _ecbEncryptor.TransformBlock(_counterBuffer, 0, 16, _keystreamBuffer, 0);
 
+            // 2. Mezclar (XOR) el ruido con tus datos
             int chunkSize = Math.Min(16, input.Length - i);
             for (int j = 0; j < chunkSize; j++)
             {
-                output[i + j] = (byte)(input[i + j] ^ keystream[j]);
+                output[i + j] = (byte)(input[i + j] ^ _keystreamBuffer[j]);
             }
 
-            IncrementCounter(counterArray);
+            // 3. Incrementar el contador
+            IncrementCounter(_counterBuffer);
             i += 16;
         }
     }

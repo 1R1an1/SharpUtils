@@ -193,6 +193,7 @@ public class TcpServer
     private async Task HandleClientAsync(TcpClient client)
     {
         string ip = client.Client.RemoteEndPoint?.ToString() ?? "?";
+        bool connectedEventSent = false;
         client.NoDelay = true;
 
         try
@@ -224,6 +225,7 @@ public class TcpServer
                 SecureStreams[client] = stream;
 
             OnClientConnected?.Invoke(ip);
+            connectedEventSent = true;
 
             if (OnClientAsync != null)
                 await OnClientAsync(client, stream);
@@ -241,7 +243,8 @@ public class TcpServer
             if (EnableTLS)
                 SecureStreams.TryRemove(client, out _);
 
-            OnClientDisconnected?.Invoke(ip);
+            if (connectedEventSent)
+                OnClientDisconnected?.Invoke(ip);
         }
     }
 

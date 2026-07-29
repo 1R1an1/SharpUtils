@@ -297,7 +297,7 @@ public class TcpServer
         catch
         {
             // Timeout, socket cerrado, lo que sea → auth falló, cerrar silenciosamente
-            try { if (stream != null) stream.ReadTimeout = 0; } catch { }
+            try { if (client != null) client.ReceiveTimeout = 0; } catch { }
             OnAuthFail?.Invoke(client);
             return false;
         }

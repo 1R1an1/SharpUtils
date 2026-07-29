@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SharpUtils.Network;
@@ -14,13 +15,14 @@ namespace SharpUtils.Network;
 /// </summary>
 /// <remarks>
 /// Ofrece dos métodos de conexión: <see cref="ConnectAsync"/> (sin encriptar) y 
-/// <see cref="ConnectSecureAsync"/> (envolviendo la conexión en TLS para certificados autofirmados).
+/// <see cref="ConnectTLSAsync"/> (envolviendo la conexión en TLS para certificados autofirmados).
 /// Ambos siempre hacen el handshake que espera <see cref="TcpServer"/> cuando 
 /// <see cref="TcpServer.EnableAuth"/> es true. Si no le pasás password, usan
 /// <see cref="TcpServer.DefaultPassword"/>.
-/// Si el server rechaza (password incorrecta) o si pasa de 5 segundos sin respuesta,
-/// lanza <see cref="IOException"/> — porque el server cierra el socket y la próxima
-/// lectura falla como si se hubiera cortado la conexión en cualquier otro momento.
+/// Si el servidor no acepta la conexión dentro del tiempo indicado por
+/// <c>connectionTimeout</c>, lanza <see cref="TimeoutException"/>.
+/// Si el servidor rechaza el handshake (password incorrecta) o cierra la conexión
+/// durante la autenticación, lanza <see cref="IOException"/>.
 /// </remarks>
 /// <example>
 /// <code>
@@ -41,17 +43,27 @@ public static class TcpConnection
     /// <param name="password">
     /// Password para el handshake. Si es null, usa <see cref="TcpServer.DefaultPassword"/>.
     /// </param>
+    /// <param name="connectionTimeout">
+    /// Tiempo máximo de espera para establecer la conexión TCP, en milisegundos.
+    /// Por defecto es 10000 (10 segundos).
+    /// </param>
     /// <returns>El <see cref="TcpClient"/> ya autenticado y listo para usar.</returns>
-    /// <exception cref="IOException">
-    /// Si el server rechaza el handshake (password incorrecta) o si pasa de 5s sin respuesta.
+    /// <exception cref="TimeoutException">
+    /// Si no se puede establecer la conexión TCP dentro del tiempo límite.
     /// </exception>
-    public static async Task<TcpClient> ConnectAsync(string host, int port, string password = null)
+    /// <exception cref="IOException">
+    /// Si el servidor rechaza el handshake o cierra la conexión durante la autenticación.
+    /// </exception>
+    public static async Task<TcpClient> ConnectAsync(string host, int port, string password = null, uint connectionTimeout = 10000)
     {
         if (password == null)
             password = TcpServer.DefaultPassword;
 
         var client = new TcpClient();
-        await client.ConnectAsync(host, port);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(connectionTimeout));
+        try { await client.ConnectAsync(host, port, timeout.Token); }
+        catch (OperationCanceledException) { client.Dispose(); throw new TimeoutException(); }
 
         NetworkStream stream = client.GetStream();
 
@@ -65,15 +77,27 @@ public static class TcpConnection
     /// <param name="host">Hostname o IP del servidor.</param>
     /// <param name="port">Puerto del servidor.</param>
     /// <param name="password">Password para el handshake. Si es null, usa <see cref="TcpServer.DefaultPassword"/>.</param>
+    /// <param name="connectionTimeout">
+    /// Tiempo máximo de espera para establecer la conexión TCP, en milisegundos.
+    /// Por defecto es 10000 (10 segundos).
+    /// </param>
     /// <returns>Una tupla con el <see cref="TcpClient"/> y el <see cref="SslStream"/> ya autenticados y encriptados.</returns>
-    /// <exception cref="IOException">Si el server rechaza el handshake o si pasa de 5s sin respuesta.</exception>
-    public static async Task<(TcpClient Client, Stream Stream)> ConnectTLSAsync(string host, int port, string password = null)
+    /// <exception cref="TimeoutException">
+    /// Si no se puede establecer la conexión TCP dentro del tiempo límite.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// Si el servidor rechaza el handshake o cierra la conexión durante la autenticación.
+    /// </exception>
+    public static async Task<(TcpClient Client, Stream Stream)> ConnectTLSAsync(string host, int port, string password = null, uint connectionTimeout = 10000)
     {
         if (password == null)
             password = TcpServer.DefaultPassword;
 
         var client = new TcpClient();
-        await client.ConnectAsync(host, port);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(connectionTimeout));
+        try { await client.ConnectAsync(host, port, timeout.Token); }
+        catch (OperationCanceledException) { client.Dispose(); throw new TimeoutException(); }
 
         // 1. Envolver en TLS inmediatamente. El callback devuelve true siempre para aceptar certificados autofirmados.
         var networkStream = client.GetStream();
@@ -86,6 +110,15 @@ public static class TcpConnection
         return (client, sslStream);
     }
 
+    /// <summary>
+    /// Realiza el handshake challenge-response con el servidor usando la contraseña indicada.
+    /// </summary>
+    /// <param name="client">Cliente TCP conectado.</param>
+    /// <param name="stream">Stream sobre el que se realizará el handshake.</param>
+    /// <param name="password">Password utilizada para responder al challenge del servidor.</param>
+    /// <exception cref="IOException">
+    /// Si el servidor rechaza el handshake o cierra la conexión durante la autenticación.
+    /// </exception>
     private static void HandShake(TcpClient client, Stream stream, string password)
     {
         try

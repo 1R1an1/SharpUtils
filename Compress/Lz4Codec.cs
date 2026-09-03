@@ -1,38 +1,42 @@
 ﻿using System;
+using System.Buffers.Binary;
 using K4os.Compression.LZ4;
 
 namespace SharpUtils.Compress;
 
 /// <summary>
 /// Compresión y descompresión LZ4 ultra rápida y sin pérdida.
-/// Ideal para streaming en tiempo real y archivos genéricos.
 /// </summary>
 public static class Lz4Codec
 {
+    private const int HeaderSize = 4;
+
     /// <summary>
-    /// Comprime un array de bytes.
+    /// Comprime datos usando LZ4.
+    /// Los primeros 4 bytes contienen el tamaño original.
     /// </summary>
-    public static byte[] Compress(byte[] data)
+    public static byte[] Compress(ReadOnlySpan<byte> data, LZ4Level level = LZ4Level.L00_FAST)
     {
-        // El tamaño máximo comprimido de LZ4 es original + 4 bytes por cada 255 bytes.
-        int maxSize = data.Length + (data.Length / 255) + 16;
-        byte[] output = new byte[maxSize];
+        int maxSize = LZ4Codec.MaximumOutputSize(data.Length);
 
-        int written = LZ4Codec.Encode(data, 0, data.Length, output, 0, maxSize);
+        byte[] output = new byte[HeaderSize + maxSize];
 
-        // Recortamos el array al tamaño exacto que se escribió
-        Array.Resize(ref output, written);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0, HeaderSize), data.Length);
+        int written = LZ4Codec.Encode(data, output.AsSpan(HeaderSize), level);
+
+        Array.Resize(ref output, HeaderSize + written);
         return output;
     }
 
     /// <summary>
-    /// Descomprime un array de bytes. 
-    /// Requiere saber el tamaño original del dato (se lo tenés que pasar).
+    /// Descomprime datos LZ4.
     /// </summary>
-    public static byte[] Decompress(byte[] compressedData, int originalSize)
+    public static byte[] Decompress(ReadOnlySpan<byte> compressedData)
     {
+        int originalSize = BinaryPrimitives.ReadInt32LittleEndian(compressedData[..HeaderSize]);
         byte[] output = new byte[originalSize];
-        LZ4Codec.Decode(compressedData, 0, compressedData.Length, output, 0, originalSize);
+
+        LZ4Codec.Decode(compressedData[HeaderSize..], output);
         return output;
     }
 }

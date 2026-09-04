@@ -31,7 +31,7 @@ namespace SharpUtils.Network;
 /// server.Start();
 /// </code>
 /// </example>
-public class TcpServer
+public class TcpServer : IDisposable
 {
     /// <summary>
     /// Password por defecto compartida por <see cref="TcpServer"/> y <see cref="TcpConnection"/>.
@@ -317,5 +317,28 @@ public class TcpServer
         var req = new CertificateRequest("CN=AudioRouterPC", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         // Válido por 1 año
         return req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+    }
+
+    public void Dispose()
+    {
+        Stop();
+        foreach (var client in _clients.Values)
+        {
+            client.Close();
+            client.Dispose();
+        }
+        _clients.Clear();
+
+        foreach (var stream in SecureStreams.Values)
+        {
+            stream?.Close();
+            stream?.Dispose();
+        }
+        SecureStreams.Clear();
+
+
+        _listener.Dispose();
+        _cts.Dispose();
+        _serverCert?.Dispose();
     }
 }

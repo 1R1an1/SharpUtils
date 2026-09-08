@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace SharpUtils.Network;
 
@@ -144,10 +145,22 @@ public static class PacketProtocol
     /// </summary>
     /// <param name="stream">Stream destino.</param>
     /// <param name="data">Bytes a escribir. El largo respeta la config <see cref="Length"/>.</param>
-    public static void WriteBytes(Stream stream, ReadOnlyMemory<byte> data)
+    public static async Task WriteBytesAsync(Stream stream, ReadOnlyMemory<byte> data)
     {
         WriteInt(stream, data.Length);
-        stream.Write(data.Span);
+        await stream.WriteAsync(data);
+    }
+
+    /// <summary>
+    /// Escribe un array de bytes crudo al stream: primero el largo (con <see cref="WriteInt"/>)
+    /// y después los bytes. Sirve para mandar archivos binarios, imágenes, lo que sea.
+    /// </summary>
+    /// <param name="stream">Stream destino.</param>
+    /// <param name="data">Bytes a escribir. El largo respeta la config <see cref="Length"/>.</param>
+    public static void WriteBytes(Stream stream, ReadOnlySpan<byte> data)
+    {
+        WriteInt(stream, data.Length);
+        stream.Write(data);
     }
 
     /// <summary>

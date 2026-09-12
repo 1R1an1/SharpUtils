@@ -43,7 +43,7 @@ public class AesCTRCipher
     /// <summary>
     /// Encripta el audio y le inyecta un número de secuencia oculto al principio.
     /// </summary>
-    public byte[] Encrypt(byte[] audioPlano)
+    public byte[] Encrypt(ReadOnlySpan<byte> audioPlano)
     {
         // Creamos el paquete final: [4 bytes de Secuencia] + [Audio Encriptado]
         byte[] paqueteFinal = new byte[4 + audioPlano.Length];
@@ -60,10 +60,24 @@ public class AesCTRCipher
         return paqueteFinal;
     }
 
+    public int Encrypt(ReadOnlySpan<byte> audioPlano, Span<byte> destino)
+    {
+        int longitudNecesaria = 4 + audioPlano.Length;
+
+        if (destino.Length < longitudNecesaria)
+            throw new ArgumentException("El buffer de destino es demasiado pequeño.", nameof(destino));
+
+        BinaryPrimitives.WriteUInt32BigEndian(destino, (uint)_currentSequence);
+        ProcessCtr(audioPlano, destino.Slice(4, audioPlano.Length), _currentSequence);
+        _currentSequence++;
+
+        return longitudNecesaria;
+    }
+
     /// <summary>
     /// Desencripta el paquete. Lee el número de secuencia oculto y lo desencripta sin importar el orden.
     /// </summary>
-    public byte[] Decrypt(byte[] paqueteRecibido)
+    public byte[] Decrypt(ReadOnlySpan<byte> paqueteRecibido)
     {
         if (paqueteRecibido.Length < 4) return Array.Empty<byte>();
 
@@ -73,16 +87,34 @@ public class AesCTRCipher
         // 2. Desencriptamos SIEMPRE usando el ticket de este paquete específico
         // (Así da igual si llegó desordenado, el AES-CTR lo resuelve)
         byte[] audioPlano = new byte[paqueteRecibido.Length - 4];
-        ProcessCtr(paqueteRecibido.AsSpan(4), audioPlano, seqRecibida);
+        ProcessCtr(paqueteRecibido.Slice(4), audioPlano, seqRecibida);
 
         // 3. Solo avanzamos nuestro reloj si el paquete que llegó es MÁS NUEVO que el que esperábamos
         // Si llega un paquete viejo (atrasado), no movemos el reloj para atrás.
         if (seqRecibida >= _currentSequence)
-        {
             _currentSequence = seqRecibida + 1;
-        }
 
         return audioPlano;
+    }
+
+    public int Decrypt(ReadOnlySpan<byte> paqueteRecibido, Span<byte> destino)
+    {
+        if (paqueteRecibido.Length < 4)
+            return 0;
+
+        int longitudAudio = paqueteRecibido.Length - 4;
+
+        if (destino.Length < longitudAudio)
+            throw new ArgumentException("El buffer de destino es demasiado pequeño.", nameof(destino));
+
+        uint seqRecibida = BinaryPrimitives.ReadUInt32BigEndian(paqueteRecibido);
+
+        ProcessCtr(paqueteRecibido.Slice(4), destino.Slice(0, longitudAudio), seqRecibida);
+
+        if (seqRecibida >= _currentSequence)
+            _currentSequence = seqRecibida + 1;
+
+        return longitudAudio;
     }
 
     /// <summary>

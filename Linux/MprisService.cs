@@ -180,15 +180,19 @@ public interface IMprisPlayer : IDBusObject
 public class MprisService : IMprisRoot, IMprisPlayer
 {
     public ObjectPath ObjectPath => new(ObjPath);
-    const string ObjPath = "/org/mpris/MediaPlayer2";   // fijo por spec MPRIS2
-    static readonly IDisposable NoDispose = new Disposer();
+    private const string ObjPath = "/org/mpris/MediaPlayer2";   // fijo por spec MPRIS2
 
-    class Disposer : IDisposable { public void Dispose() { } }
+    class Unsubscriber : IDisposable
+    {
+        Action _onDispose;
+        public Unsubscriber(Action onDispose) => _onDispose = onDispose;
+        public void Dispose() { _onDispose?.Invoke(); _onDispose = null; }
+    }
 
     static Connection connection;
     static MprisService instance;
-    static MprisSource source;
-    static MprisCapabilities capabilities;
+    public static MprisSource source { get; set; }
+    public static MprisCapabilities capabilities { get; private set; }
     static MprisOptions options;
 
     // Snapshot de lo último emitido, para detectar cambios reales en Update()
@@ -204,8 +208,8 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public static double shownVolume { get; private set; } = 1.0;
     public static double shownRate { get; private set; } = 1.0;
 
-    static Action<PropertyChanges> playerChanged;
-    static Action<long> seekedHandler;
+    static event Action<PropertyChanges> PlayerChanged;
+    static event Action<long> Seeked;
 
     MprisService() { }
 
@@ -239,9 +243,9 @@ public class MprisService : IMprisRoot, IMprisPlayer
 
         connection = new Connection(Address.Session);
         await connection.ConnectAsync();
-        await connection.RegisterServiceAsync(BusName);
         instance = new MprisService();
         await connection.RegisterObjectAsync(instance);
+        await connection.RegisterServiceAsync(BusName);
     }
 
     /// <summary>
@@ -315,15 +319,15 @@ public class MprisService : IMprisRoot, IMprisPlayer
             changed["Rate"] = shownRate;
         }
 
-        if (changed.Count > 0 && playerChanged != null)
-            playerChanged(new PropertyChanges { Changed = changed, Invalidated = Array.Empty<string>() });
+        if (changed.Count > 0)
+            PlayerChanged?.Invoke(new PropertyChanges { Changed = changed, Invalidated = Array.Empty<string>() });
     }
 
     static IDictionary<string, object> BuildMetadata()
     {
         var m = new Dictionary<string, object> { ["mpris:trackid"] = trackId };
-        if (source.Title.Length > 0) m["xesam:title"] = source.Title;
-        if (source.Artist.Length > 0) m["xesam:artist"] = new[] { source.Artist };
+        if (source.Title != null) m["xesam:title"] = source.Title;
+        if (source.Artist != null) m["xesam:artist"] = new[] { source.Artist };
         if (source.DurationUs > 0) m["mpris:length"] = source.DurationUs;
         if (coverUri != null) m["mpris:artUrl"] = coverUri;
         return m;
@@ -341,7 +345,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public Task SeekAsync(long offsetUs)
     {
         source.Seek(offsetUs);
-        seekedHandler?.Invoke(source.PositionUs);
+        Seeked?.Invoke(source.PositionUs);
         return Task.CompletedTask;
     }
 
@@ -350,7 +354,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
         if (tid == trackId && positionUs >= 0)
         {
             source.SetPosition(positionUs);
-            seekedHandler?.Invoke(positionUs);
+            Seeked?.Invoke(positionUs);
         }
         return Task.CompletedTask;
     }
@@ -361,12 +365,21 @@ public class MprisService : IMprisRoot, IMprisPlayer
 
     public Task<IDisposable> WatchSeekedAsync(Action<long> handler, Action<Exception> onError = null)
     {
-        seekedHandler = handler;
-        return Task.FromResult(NoDispose);
+        Seeked += handler;
+        return Task.FromResult<IDisposable>(new Unsubscriber(() => Seeked -= handler));
     }
 
-    Task<IDisposable> IMprisRoot.WatchPropertiesAsync(Action<PropertyChanges> handler) { return Task.FromResult(NoDispose); }
-    Task<IDisposable> IMprisPlayer.WatchPropertiesAsync(Action<PropertyChanges> handler) { playerChanged = handler; return Task.FromResult(NoDispose); }
+    Task<IDisposable> IMprisRoot.WatchPropertiesAsync(Action<PropertyChanges> handler)
+    {
+        PlayerChanged += handler;
+        return Task.FromResult<IDisposable>(new Unsubscriber(() => PlayerChanged -= handler));
+    }
+
+    Task<IDisposable> IMprisPlayer.WatchPropertiesAsync(Action<PropertyChanges> handler)
+    {
+        PlayerChanged += handler;
+        return Task.FromResult<IDisposable>(new Unsubscriber(() => PlayerChanged -= handler));
+    }
 
     // PÚBLICOS a propósito: el codegen escanea con type.GetMethods() y los métodos
     // de implementación explícita son invisibles para esa llamada.
@@ -404,8 +417,8 @@ public class MprisService : IMprisRoot, IMprisPlayer
 
     public Task<IDisposable> WatchPropertiesAsync(Action<PropertyChanges> handler)
     {
-        playerChanged = handler;
-        return Task.FromResult(NoDispose);
+        PlayerChanged += handler;
+        return Task.FromResult<IDisposable>(new Unsubscriber(() => PlayerChanged -= handler));
     }
 
     static IDictionary<string, object> GetAllProperties()

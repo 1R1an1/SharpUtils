@@ -52,6 +52,22 @@ public abstract class MprisSource
 
     /// <summary>Velocidad de reproducción. Asignar solo si se declara <see cref="MprisCapabilities.SupportsRate"/>.</summary>
     public double Rate = 1.0;
+
+    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="LoopStatus"/>. Overrideá para reaccionar.</summary>
+    /// <param name="loop">Nuevo valor de <see cref="LoopStatus"/> ("None", "Track" o "Playlist").</param>
+    public virtual void LoopChanged(string loop) { }
+
+    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Shuffle"/>. Overrideá para reaccionar.</summary>
+    /// <param name="shuffle">Nuevo valor de <see cref="Shuffle"/>.</param>
+    public virtual void ShuffleChanged(bool shuffle) { }
+
+    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Volume"/>. Overrideá para reaccionar.</summary>
+    /// <param name="volume">Nuevo valor de <see cref="Volume"/> (0.0 a 1.0).</param>
+    public virtual void VolumeChanged(double volume) { }
+
+    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Rate"/>. Overrideá para reaccionar.</summary>
+    /// <param name="rate">Nuevo valor de <see cref="Rate"/>.</param>
+    public virtual void RateChanged(double rate) { }
 }
 
 /// <summary>
@@ -62,49 +78,49 @@ public abstract class MprisSource
 public sealed record class MprisCapabilities
 {
     /// <summary>Si la app puede cerrarse vía <see cref="MprisSource.Quit"/>.</summary>
-    public bool CanQuit { get; init; } = false;
+    public bool CanQuit { get; set; } = false;
 
     /// <summary>Si la app puede traer su ventana al frente vía <see cref="MprisSource.Raise"/>.</summary>
-    public bool CanRaise { get; init; } = false;
+    public bool CanRaise { get; set; } = false;
 
     /// <summary>Si la app puede iniciar reproducción.</summary>
-    public bool CanPlay { get; init; } = true;
+    public bool CanPlay { get; set; } = true;
 
     /// <summary>Si la app puede pausar.</summary>
-    public bool CanPause { get; init; } = true;
+    public bool CanPause { get; set; } = true;
 
     /// <summary>Si la app permite cambiar la posición del track.</summary>
-    public bool CanSeek { get; init; } = true;
+    public bool CanSeek { get; set; } = true;
 
     /// <summary>Si la app puede ir al track siguiente.</summary>
-    public bool CanGoNext { get; init; } = true;
+    public bool CanGoNext { get; set; } = true;
 
     /// <summary>Si la app puede ir al track anterior.</summary>
-    public bool CanGoPrevious { get; init; } = true;
+    public bool CanGoPrevious { get; set; } = true;
 
     /// <summary>Si la app puede detener (distinto de pausar: resetea la posición).</summary>
-    public bool CanStop { get; init; } = false;
+    public bool CanStop { get; set; } = false;
 
-    /// <summary>Si el escritorio puede mandar comandos en absoluto. Casi siempre true.</summary>
-    public bool CanControl { get; init; } = true;
+    /// <summary>Si el escritorio puede mandar com1andos en absoluto. Casi siempre true.</summary>
+    public bool CanControl { get; set; } = true;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.LoopStatus"/>.</summary>
-    public bool SupportsLoop { get; init; } = false;
+    public bool SupportsLoop { get; set; } = false;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Shuffle"/>.</summary>
-    public bool SupportsShuffle { get; init; } = false;
+    public bool SupportsShuffle { get; set; } = false;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Volume"/>.</summary>
-    public bool SupportsVolume { get; init; } = false;
+    public bool SupportsVolume { get; set; } = false;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Rate"/>.</summary>
-    public bool SupportsRate { get; init; } = false;
+    public bool SupportsRate { get; set; } = false;
 
     /// <summary>Esquemas de URI que la app acepta en <see cref="MprisSource.OpenUri"/> (p.ej. "file", "http").</summary>
-    public string[] SupportedUriSchemes { get; init; } = Array.Empty<string>();
+    public string[] SupportedUriSchemes { get; set; } = Array.Empty<string>();
 
     /// <summary>Tipos MIME que la app puede abrir (p.ej. "audio/mpeg", "audio/ogg").</summary>
-    public string[] SupportedMimeTypes { get; init; } = Array.Empty<string>();
+    public string[] SupportedMimeTypes { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -398,15 +414,19 @@ public class MprisService : IMprisRoot, IMprisPlayer
         {
             case "LoopStatus" when capabilities.SupportsLoop:
                 source.LoopStatus = (string)value;
+                source.LoopChanged(source.LoopStatus);
                 break;
             case "Shuffle" when capabilities.SupportsShuffle:
                 source.Shuffle = Convert.ToBoolean(value);
+                source.ShuffleChanged(source.Shuffle);
                 break;
             case "Volume" when capabilities.SupportsVolume:
                 source.Volume = Convert.ToDouble(value);
+                source.VolumeChanged(source.Volume);
                 break;
             case "Rate" when capabilities.SupportsRate:
                 source.Rate = Convert.ToDouble(value);
+                source.RateChanged(source.Rate);
                 break;
         }
         return Task.CompletedTask;

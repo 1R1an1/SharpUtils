@@ -81,7 +81,7 @@ public sealed record class MprisCapabilities
     public bool CanQuit { get; set; } = false;
 
     /// <summary>Si la app puede traer su ventana al frente vía <see cref="MprisSource.Raise"/>.</summary>
-    public bool CanRaise { get; set; } = false;
+    public bool CanRaise { get; init; } = false;
 
     /// <summary>Si la app puede iniciar reproducción.</summary>
     public bool CanPlay { get; set; } = true;
@@ -105,22 +105,22 @@ public sealed record class MprisCapabilities
     public bool CanControl { get; set; } = true;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.LoopStatus"/>.</summary>
-    public bool SupportsLoop { get; set; } = false;
+    public bool SupportsLoop { get; init; } = false;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Shuffle"/>.</summary>
-    public bool SupportsShuffle { get; set; } = false;
+    public bool SupportsShuffle { get; init; } = false;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Volume"/>.</summary>
-    public bool SupportsVolume { get; set; } = false;
+    public bool SupportsVolume { get; init; } = false;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Rate"/>.</summary>
-    public bool SupportsRate { get; set; } = false;
+    public bool SupportsRate { get; init; } = false;
 
     /// <summary>Esquemas de URI que la app acepta en <see cref="MprisSource.OpenUri"/> (p.ej. "file", "http").</summary>
-    public string[] SupportedUriSchemes { get; set; } = Array.Empty<string>();
+    public string[] SupportedUriSchemes { get; init; } = Array.Empty<string>();
 
     /// <summary>Tipos MIME que la app puede abrir (p.ej. "audio/mpeg", "audio/ogg").</summary>
-    public string[] SupportedMimeTypes { get; set; } = Array.Empty<string>();
+    public string[] SupportedMimeTypes { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -224,6 +224,12 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public static double shownVolume { get; private set; } = 1.0;
     public static double shownRate { get; private set; } = 1.0;
 
+    // Snapshot de capabilities, para detectar cambios en runtime.
+    private static bool shownCanQuit, shownCanPlay, shownCanPause,
+                shownCanSeek, shownCanGoNext, shownCanGoPrevious, shownCanStop,
+                shownCanControl;
+
+
     static event Action<PropertyChanges> PlayerChanged;
     static event Action<long> Seeked;
 
@@ -256,6 +262,16 @@ public class MprisService : IMprisRoot, IMprisPlayer
         shownVolume = src.Volume;
         shownRate = src.Rate;
         trackId = new ObjectPath(TrackIdPrefix + "0");
+
+        // Snapshot inicial de capabilities
+        shownCanQuit = caps.CanQuit;
+        shownCanPlay = caps.CanPlay;
+        shownCanPause = caps.CanPause;
+        shownCanSeek = caps.CanSeek;
+        shownCanGoNext = caps.CanGoNext;
+        shownCanGoPrevious = caps.CanGoPrevious;
+        shownCanStop = caps.CanStop;
+        shownCanControl = caps.CanControl;
 
         connection = new Connection(Address.Session);
         await connection.ConnectAsync();
@@ -333,6 +349,47 @@ public class MprisService : IMprisRoot, IMprisPlayer
         {
             shownRate = source.Rate;
             changed["Rate"] = shownRate;
+        }
+
+        if (capabilities.CanQuit != shownCanQuit)
+        {
+            shownCanQuit = capabilities.CanQuit;
+            changed["CanQuit"] = shownCanQuit;
+        }
+        if (capabilities.CanPlay != shownCanPlay)
+        {
+            shownCanPlay = capabilities.CanPlay;
+            changed["CanPlay"] = shownCanPlay;
+        }
+        if (capabilities.CanPause != shownCanPause)
+        {
+            shownCanPause = capabilities.CanPause;
+            changed["CanPause"] = shownCanPause;
+        }
+        if (capabilities.CanSeek != shownCanSeek)
+        {
+            shownCanSeek = capabilities.CanSeek;
+            changed["CanSeek"] = shownCanSeek;
+        }
+        if (capabilities.CanGoNext != shownCanGoNext)
+        {
+            shownCanGoNext = capabilities.CanGoNext;
+            changed["CanGoNext"] = shownCanGoNext;
+        }
+        if (capabilities.CanGoPrevious != shownCanGoPrevious)
+        {
+            shownCanGoPrevious = capabilities.CanGoPrevious;
+            changed["CanGoPrevious"] = shownCanGoPrevious;
+        }
+        if (capabilities.CanStop != shownCanStop)
+        {
+            shownCanStop = capabilities.CanStop;
+            changed["CanStop"] = shownCanStop;
+        }
+        if (capabilities.CanControl != shownCanControl)
+        {
+            shownCanControl = capabilities.CanControl;
+            changed["CanControl"] = shownCanControl;
         }
 
         if (changed.Count > 0)

@@ -26,20 +26,20 @@ public abstract class MprisSource
     public string CoverHashHex = "";
     public byte[] CoverBytes = null;
 
-    public virtual void TogglePlayPause() { }
+    protected internal virtual void TogglePlayPause() { }
 
     /// <param name="offsetUs">Offset relativo en microsegundos (positivo o negativo).</param>
-    public virtual void Seek(long offsetUs) { }
+    protected internal virtual void Seek(long offsetUs) { }
 
     /// <param name="positionUs">Posición absoluta en microsegundos.</param>
-    public virtual void SetPosition(long positionUs) { }
+    protected internal virtual void SetPosition(long positionUs) { }
 
-    public virtual void Stop() { }
-    public virtual void Next() { }
-    public virtual void Prev() { }
-    public virtual void Quit() { }
-    public virtual void Raise() { }
-    public virtual void OpenUri(string uri) { }
+    protected internal virtual void Stop() { }
+    protected internal virtual void Next() { }
+    protected internal virtual void Prev() { }
+    protected internal virtual void Quit() { }
+    protected internal virtual void Raise() { }
+    protected internal virtual void OpenUri(string uri) { }
 
     /// <summary>"None", "Track" o "Playlist". Asignar solo si se declara <see cref="MprisCapabilities.SupportsLoop"/>.</summary>
     public string LoopStatus = "None";
@@ -55,19 +55,19 @@ public abstract class MprisSource
 
     /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="LoopStatus"/>. Overrideá para reaccionar.</summary>
     /// <param name="loop">Nuevo valor de <see cref="LoopStatus"/> ("None", "Track" o "Playlist").</param>
-    public virtual void LoopChanged(string loop) { }
+    protected internal virtual void LoopChanged(string loop) { }
 
     /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Shuffle"/>. Overrideá para reaccionar.</summary>
     /// <param name="shuffle">Nuevo valor de <see cref="Shuffle"/>.</param>
-    public virtual void ShuffleChanged(bool shuffle) { }
+    protected internal virtual void ShuffleChanged(bool shuffle) { }
 
     /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Volume"/>. Overrideá para reaccionar.</summary>
     /// <param name="volume">Nuevo valor de <see cref="Volume"/> (0.0 a 1.0).</param>
-    public virtual void VolumeChanged(double volume) { }
+    protected internal virtual void VolumeChanged(double volume) { }
 
     /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Rate"/>. Overrideá para reaccionar.</summary>
     /// <param name="rate">Nuevo valor de <see cref="Rate"/>.</param>
-    public virtual void RateChanged(double rate) { }
+    protected internal virtual void RateChanged(double rate) { }
 }
 
 /// <summary>

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace D4taW0rm.Common;
+namespace SharpUtils.Linux;
 
 public static class LinuxKRL
 {

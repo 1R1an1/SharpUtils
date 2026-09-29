@@ -250,6 +250,11 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public static bool shownShuffle { get; private set; }
     public static double shownVolume { get; private set; } = 1.0;
     public static double shownRate { get; private set; } = 1.0;
+    public static long shownPositionUs { get; private set; } = 0;
+
+    ///<summary> Umbral para emitir Seeked: si la posición cambió más de esto entre
+    /// llamadas a Update(), asumimos que fue un seek (no avance natural). </summary>
+    public static long SeekThresholdUs { get; set; } = 1_000_000; // 1 segundo
 
     // Snapshot de capabilities, para detectar cambios en runtime.
     private static bool shownCanQuit, shownCanPlay, shownCanPause,
@@ -288,6 +293,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
         shownShuffle = src.Shuffle;
         shownVolume = src.Volume;
         shownRate = src.Rate;
+        shownPositionUs = src.PositionUs;
         trackId = new ObjectPath(TrackIdPrefix + "0");
 
         // Snapshot inicial de capabilities
@@ -328,7 +334,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
             trackChanged = true;
         }
 
-        if (source.CoverHashHex != lastCoverHash && source.CoverHashHex.Length > 0 && source.CoverBytes?.Length > 0)
+        if (source.CoverHashHex != lastCoverHash && !string.IsNullOrWhiteSpace(source.CoverHashHex) && source.CoverBytes?.Length > 0)
         {
             try
             {
@@ -346,6 +352,11 @@ public class MprisService : IMprisRoot, IMprisPlayer
             lastCoverHash = source.CoverHashHex;
             changed["Metadata"] = BuildMetadata();
         }
+        else if (source.CoverHashHex != lastCoverHash)
+        {
+            coverUri = null;
+            changed["Metadata"] = BuildMetadata();
+        }
 
         if (trackChanged || source.Artist != shownArtist)
         {
@@ -358,6 +369,14 @@ public class MprisService : IMprisRoot, IMprisPlayer
             shownPlaying = source.IsPlaying;
             changed["PlaybackStatus"] = shownPlaying ? "Playing" : "Paused";
         }
+
+        if (Math.Abs(source.PositionUs - shownPositionUs) > SeekThresholdUs)
+        {
+            shownPositionUs = source.PositionUs;
+            Seeked?.Invoke(source.PositionUs);
+        }
+        else
+            shownPositionUs = source.PositionUs;
 
         if (capabilities.SupportsLoop && source.LoopStatus != shownLoopStatus)
         {

@@ -10,8 +10,7 @@ namespace SharpUtils.Linux;
 
 /// <summary>
 /// Fuente de estado y acciones que <see cref="MprisService"/> expone por D-Bus.
-/// Es abstracta: se usa heredando y asignando los campos desde la subclase.
-/// Los métodos son virtuales no-op; overrideá solo los que tu app soporte.
+/// Heredá y asigná los campos desde la subclase; overrideá los métodos que tu app soporte.
 /// </summary>
 public abstract class MprisSource
 {
@@ -28,54 +27,68 @@ public abstract class MprisSource
     public string CoverHashHex = "";
     public byte[] CoverBytes = null;
 
+    /// <summary>Overrideá para responder a play/pause desde el escritorio.</summary>
     protected internal virtual void TogglePlayPause() { }
 
+    /// <summary>Seek relativo. Overrideá si tu app soporta seek.</summary>
     /// <param name="offsetUs">Offset relativo en microsegundos (positivo o negativo).</param>
     protected internal virtual void Seek(long offsetUs) { }
 
+    /// <summary>Seek absoluto. Overrideá si tu app soporta seek.</summary>
     /// <param name="positionUs">Posición absoluta en microsegundos.</param>
     protected internal virtual void SetPosition(long positionUs) { }
 
+    /// <summary>Overrideá si tu app puede detener la reproducción.</summary>
     protected internal virtual void Stop() { }
+
+    /// <summary>Overrideá si tu app puede ir al track siguiente.</summary>
     protected internal virtual void Next() { }
+
+    /// <summary>Overrideá si tu app puede ir al track anterior.</summary>
     protected internal virtual void Prev() { }
+
+    /// <summary>Overrideá si tu app puede cerrarse desde el escritorio.</summary>
     protected internal virtual void Quit() { }
+
+    /// <summary>Overrideá si tu app puede abrir/enfocar su ventana desde el escritorio.</summary>
     protected internal virtual void Raise() { }
+
+    /// <summary>Overrideá si tu app puede abrir URIs externos.</summary>
+    /// <param name="uri">URI a abrir.</param>
     protected internal virtual void OpenUri(string uri) { }
 
-    /// <summary>"None", "Track" o "Playlist". Asignar solo si se declara <see cref="MprisCapabilities.SupportsLoop"/>.</summary>
+    /// <summary>"None", "Track" o "Playlist". Asignar solo si <see cref="MprisCapabilities.SupportsLoop"/> es true.</summary>
     public string LoopStatus = "None";
 
-    /// <summary>Asignar solo si se declara <see cref="MprisCapabilities.SupportsShuffle"/>.</summary>
+    /// <summary>Asignar solo si <see cref="MprisCapabilities.SupportsShuffle"/> es true.</summary>
     public bool Shuffle = false;
 
-    /// <summary>Rango 0.0 a 1.0. Asignar solo si se declara <see cref="MprisCapabilities.SupportsVolume"/>.</summary>
+    /// <summary>Rango 0.0 a 1.0. Asignar solo si <see cref="MprisCapabilities.SupportsVolume"/> es true.</summary>
     public double Volume = 1.0;
 
-    /// <summary>Velocidad de reproducción. Asignar solo si se declara <see cref="MprisCapabilities.SupportsRate"/>.</summary>
+    /// <summary>Velocidad de reproducción. Asignar solo si <see cref="MprisCapabilities.SupportsRate"/> es true.</summary>
     public double Rate = 1.0;
 
-    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="LoopStatus"/>. Overrideá para reaccionar.</summary>
+    /// <summary>Se invoca cuando el escritorio cambia <see cref="LoopStatus"/>.</summary>
     /// <param name="loop">Nuevo valor de <see cref="LoopStatus"/> ("None", "Track" o "Playlist").</param>
     protected internal virtual void LoopChanged(string loop) { }
 
-    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Shuffle"/>. Overrideá para reaccionar.</summary>
+    /// <summary>Se invoca cuando el escritorio cambia <see cref="Shuffle"/>.</summary>
     /// <param name="shuffle">Nuevo valor de <see cref="Shuffle"/>.</param>
     protected internal virtual void ShuffleChanged(bool shuffle) { }
 
-    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Volume"/>. Overrideá para reaccionar.</summary>
+    /// <summary>Se invoca cuando el escritorio cambia <see cref="Volume"/>.</summary>
     /// <param name="volume">Nuevo valor de <see cref="Volume"/> (0.0 a 1.0).</param>
     protected internal virtual void VolumeChanged(double volume) { }
 
-    /// <summary>Invocado por MPRIS cuando el escritorio cambia <see cref="Rate"/>. Overrideá para reaccionar.</summary>
+    /// <summary>Se invoca cuando el escritorio cambia <see cref="Rate"/>.</summary>
     /// <param name="rate">Nuevo valor de <see cref="Rate"/>.</param>
     protected internal virtual void RateChanged(double rate) { }
 }
 
 /// <summary>
-/// Declara qué funcionalidades soporta tu app.
-/// Los <c>CanX</c> controlan qué botones muestra el escritorio en el widget MPRIS;
-/// los <c>SupportsX</c> habilitan la lectura/escritura de propiedades asociadas.
+/// Declara qué funcionalidades soporta tu app ante MPRIS.
+/// Los <c>CanX</c> controlan la UI del escritorio; los <c>SupportsX</c> habilitan props opcionales.
 /// </summary>
 public sealed record class MprisCapabilities
 {
@@ -100,11 +113,11 @@ public sealed record class MprisCapabilities
     /// <summary>Si la app puede ir al track anterior.</summary>
     public bool CanGoPrevious { get; set; } = true;
 
-    /// <summary>Si la app puede detener (distinto de pausar: resetea la posición).</summary>
+    /// <summary>Si la app puede detener (distinto de pausar).</summary>
     public bool CanStop { get; set; } = false;
 
-    /// <summary>Si el escritorio puede mandar com1andos en absoluto. Casi siempre true.</summary>
-    public bool CanControl { get; set; } = true;
+    /// <summary>Si el escritorio puede mandar comandos en absoluto.</summary>
+    public bool CanControl { get; init; } = true;
 
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.LoopStatus"/>.</summary>
     public bool SupportsLoop { get; init; } = false;
@@ -118,31 +131,35 @@ public sealed record class MprisCapabilities
     /// <summary>Habilita lectura/escritura de <see cref="MprisSource.Rate"/>.</summary>
     public bool SupportsRate { get; init; } = false;
 
-    /// <summary>Esquemas de URI que la app acepta en <see cref="MprisSource.OpenUri"/> (p.ej. "file", "http").</summary>
+    /// <summary>Esquemas URI que la app acepta en <see cref="MprisSource.OpenUri"/>.</summary>
     public string[] SupportedUriSchemes { get; init; } = Array.Empty<string>();
 
-    /// <summary>Tipos MIME que la app puede abrir (p.ej. "audio/mpeg", "audio/ogg").</summary>
+    /// <summary>Tipos MIME que la app puede abrir.</summary>
     public string[] SupportedMimeTypes { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
-/// Configuración por app. Solo dos campos; el resto (bus name, desktop entry,
-/// cache dir, trackid prefix) se deriva automáticamente.
+/// Configuración de la app para MPRIS.
+/// Solo nombre y display name; el resto se deriva automáticamente.
 /// </summary>
 public sealed record class MprisOptions
 {
     private string _name;
-    /// <summary>Nombre interno de la app, sin espacios y en minúsculas (p.ej. "sharputils").</summary>
-    public required string Name { get { return _name; } init { _name = value.Replace(" ", "").ToLowerInvariant(); } }
 
-    /// <summary>Nombre visible para el usuario en el widget MPRIS. Si queda vacío, se usa <see cref="Name"/>.</summary>
+    /// <summary>Nombre interno de la app. Se normaliza a minúsculas sin espacios.</summary>
+    public required string Name { get => _name; init => _name = value.Replace(" ", "").ToLowerInvariant(); }
+
+    /// <summary>Nombre visible en el widget MPRIS. Si está vacío, se usa <see cref="Name"/>.</summary>
     public string DisplayName { get; init; } = "";
 }
 
 /// <summary>Payload de la señal PropertiesChanged de D-Bus.</summary>
 public struct PropertyChanges
 {
+    /// <summary>Props cambiadas con sus nuevos valores.</summary>
     public IDictionary<string, object> Changed;
+
+    /// <summary>Props invalidadas (el cliente debe releer con GetAll).</summary>
     public string[] Invalidated;
 }
 
@@ -191,81 +208,88 @@ public interface IMprisPlayer : IDBusObject
 }
 
 /// <summary>
-/// Implementación MPRIS2 expuesta en el bus de sesión. Singleton efectivo:
-/// una sola instancia por proceso. La implementación D-Bus (interfaces,
-/// atributos, signatures, codegen) no se modifica respecto del original.
+/// Implementación MPRIS2 expuesta en el bus de sesión. Singleton efectivo.
 /// </summary>
 public class MprisService : IMprisRoot, IMprisPlayer
 {
-    public ObjectPath ObjectPath => new(ObjPath);
-    private const string ObjPath = "/org/mpris/MediaPlayer2";   // fijo por spec MPRIS2
+    /// <summary>Proxy mínimo para hablar con org.freedesktop.DBus.</summary>
+    [DBusInterface("org.freedesktop.DBus")]
+    public interface IDBus : IDBusObject
+    {
+        /// <param name="name">Nombre de bus a verificar.</param>
+        /// <returns>true si el nombre tiene owner.</returns>
+        Task<bool> NameHasOwnerAsync(string name);
+    }
 
-    class Unsubscriber : IDisposable
+    /// <summary>Token de desuscripción para los Watch*Async.</summary>
+    private sealed class Unsubscriber : IDisposable
     {
         Action _onDispose;
         public Unsubscriber(Action onDispose) => _onDispose = onDispose;
         public void Dispose() { _onDispose?.Invoke(); _onDispose = null; }
     }
 
-    /// <summary>
-    /// Devuelve el BusName a usar. Si "org.mpris.MediaPlayer2.{name}" está libre,
-    /// lo devuelve tal cual. Si está tomado, le pega el PID al final del nombre.
-    /// </summary>
-    static async Task<string> ResolveBusNameAsync(Connection conn, string name)
-    {
-        string baseName = "org.mpris.MediaPlayer2." + name;
-
-        // Preguntar al bus si el nombre ya tiene owner.
-        // Hablamos directo con org.freedesktop.DBus.NameHasOwner.
-        const string dbusService = "org.freedesktop.DBus";
-        var dbusPath = new ObjectPath("/org/freedesktop/DBus");
-        var dbusIface = conn.CreateProxy<IDBus>(dbusService, dbusPath);
-        bool taken = await dbusIface.NameHasOwnerAsync(baseName);
-
-        return taken ? baseName + Environment.ProcessId : baseName;
-    }
-
-    // Proxy mínimo para hablar con org.freedesktop.DBus (solo lo que necesitamos).
-    [DBusInterface("org.freedesktop.DBus")]
-    public interface IDBus : IDBusObject
-    {
-        Task<bool> NameHasOwnerAsync(string name);
-    }
+    public ObjectPath ObjectPath => new(ObjPath);
+    const string ObjPath = "/org/mpris/MediaPlayer2";
 
     static Connection connection;
     static MprisService instance;
+
+    /// <summary>Source actual asignado por la app.</summary>
     public static MprisSource source { get; set; }
+
+    /// <summary>Capabilities actuales asignadas por la app.</summary>
     public static MprisCapabilities capabilities { get; private set; }
     static MprisOptions options;
-
-    // Snapshot de lo último emitido, para detectar cambios reales en Update()
-    public static string lastCoverFile { get; private set; } = "";
     static ObjectPath trackId;
+
+    /// <summary>Último archivo de tapa cacheado.</summary>
+    public static string lastCoverFile { get; private set; } = "";
+
+    /// <summary>Último título emitido.</summary>
     public static string shownTitle { get; private set; } = "";
+
+    /// <summary>Último artista emitido.</summary>
     public static string shownArtist { get; private set; } = "";
+
+    /// <summary>Último estado de reproducción emitido.</summary>
     public static bool shownPlaying { get; private set; }
+
+    /// <summary>Último hash de tapa emitido.</summary>
     public static string lastCoverHash { get; private set; } = "";
+
+    /// <summary>Última URI de tapa emitida.</summary>
     public static string coverUri { get; private set; }
+
+    /// <summary>Último LoopStatus emitido.</summary>
     public static string shownLoopStatus { get; private set; }
+
+    /// <summary>Último Shuffle emitido.</summary>
     public static bool shownShuffle { get; private set; }
+
+    /// <summary>Último Volume emitido.</summary>
     public static double shownVolume { get; private set; } = 1.0;
+
+    /// <summary>Último Rate emitido.</summary>
     public static double shownRate { get; private set; } = 1.0;
+
+    /// <summary>Última posición emitida vía Seeked.</summary>
     public static long shownPositionUs { get; private set; } = 0;
 
-    ///<summary> Umbral para emitir Seeked: si la posición cambió más de esto entre
-    /// llamadas a Update(), asumimos que fue un seek (no avance natural). </summary>
-    public static long SeekThresholdUs { get; set; } = 1_000_000; // 1 segundo
+    /// <summary>
+    /// Umbral para emitir Seeked: si la posición cambió más de esto entre
+    /// llamadas a Update(), se asume que fue un seek (no avance natural).
+    /// </summary>
+    public static long SeekThresholdUs { get; set; } = 1_000_000;
 
-    // Snapshot de capabilities, para detectar cambios en runtime.
     private static bool shownCanQuit, shownCanPlay, shownCanPause,
                 shownCanSeek, shownCanGoNext, shownCanGoPrevious, shownCanStop,
                 shownCanControl;
 
-
     static event Action<PropertyChanges> PlayerChanged;
     static event Action<long> Seeked;
 
-    MprisService() { }
+    private MprisService() { }
 
     static string BusName;
     static string Identity => string.IsNullOrEmpty(options.DisplayName) ? options.Name : options.DisplayName;
@@ -273,12 +297,10 @@ public class MprisService : IMprisRoot, IMprisPlayer
     static string CacheDir => "/tmp/" + options.Name;
     static string TrackIdPrefix => $"/org/{options.Name}/MediaPlayer2/Track/";
 
-    /// <summary>
-    /// Registra el servicio MPRIS en el bus de sesión de D-Bus.
-    /// </summary>
-    /// <param name="src">Fuente de estado y acciones que tu app provee.</param>
-    /// <param name="caps">Funcionalidades declaradas por tu app.</param>
-    /// <param name="opts">Nombre y display name de la app.</param>
+    /// <summary>Registra el servicio MPRIS en el bus de sesión de D-Bus.</summary>
+    /// <param name="src">Fuente de estado y acciones.</param>
+    /// <param name="caps">Capabilities declaradas por la app.</param>
+    /// <param name="opts">Nombre y display name.</param>
     public static async Task StartAsync(MprisSource src, MprisCapabilities caps, MprisOptions opts)
     {
         source = src;
@@ -315,10 +337,21 @@ public class MprisService : IMprisRoot, IMprisPlayer
         await connection.RegisterServiceAsync(BusName);
     }
 
+    /// <summary>Resuelve el BusName único, agregando el PID si el base está tomado.</summary>
+    /// <param name="conn">Conexión D-Bus activa.</param>
+    /// <param name="name">Nombre base de la app.</param>
+    /// <returns>BusName final a registrar.</returns>
+    static async Task<string> ResolveBusNameAsync(Connection conn, string name)
+    {
+        string baseName = "org.mpris.MediaPlayer2." + name;
+        var dbusIface = conn.CreateProxy<IDBus>("org.freedesktop.DBus", new ObjectPath("/org/freedesktop/DBus"));
+        bool taken = await dbusIface.NameHasOwnerAsync(baseName);
+        return taken ? baseName + Environment.ProcessId : baseName;
+    }
+
     /// <summary>
-    /// Compara el estado actual de <see cref="MprisSource"/> con el último emitido
-    /// y, si algo cambió, emite la señal PropertiesChanged por D-Bus.
-    /// Llamarlo desde la app cada vez que el estado pueda haber cambiado.
+    /// Emite PropertiesChanged si el estado del source o las capabilities cambiaron.
+    /// Llamar desde la app cada vez que cualquier estado pueda haber cambiado.
     /// </summary>
     public static void Update()
     {
@@ -463,6 +496,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public Task NextAsync() { source.Next(); return Task.CompletedTask; }
     public Task PreviousAsync() { source.Prev(); return Task.CompletedTask; }
 
+    /// <param name="offsetUs">Offset relativo en microsegundos.</param>
     public Task SeekAsync(long offsetUs)
     {
         source.Seek(offsetUs);
@@ -470,6 +504,8 @@ public class MprisService : IMprisRoot, IMprisPlayer
         return Task.CompletedTask;
     }
 
+    /// <param name="tid">TrackId devuelto en Metadata.mpris:trackid.</param>
+    /// <param name="positionUs">Posición absoluta en microsegundos.</param>
     public Task SetPositionAsync(ObjectPath tid, long positionUs)
     {
         if (tid == trackId && positionUs >= 0)
@@ -480,31 +516,34 @@ public class MprisService : IMprisRoot, IMprisPlayer
         return Task.CompletedTask;
     }
 
+    /// <param name="uri">URI a abrir.</param>
     public Task OpenUriAsync(string uri) { source.OpenUri(uri); return Task.CompletedTask; }
     public Task RaiseAsync() { source.Raise(); return Task.CompletedTask; }
     public Task QuitAsync() { source.Quit(); return Task.CompletedTask; }
 
+    /// <param name="handler">Handler invocado al emitirse Seeked.</param>
+    /// <param name="onError">Handler de errores opcional.</param>
     public Task<IDisposable> WatchSeekedAsync(Action<long> handler, Action<Exception> onError = null)
     {
         Seeked += handler;
         return Task.FromResult<IDisposable>(new Unsubscriber(() => Seeked -= handler));
     }
 
+    /// <param name="handler">Handler invocado al cambiar props del root.</param>
     Task<IDisposable> IMprisRoot.WatchPropertiesAsync(Action<PropertyChanges> handler)
     {
         PlayerChanged += handler;
         return Task.FromResult<IDisposable>(new Unsubscriber(() => PlayerChanged -= handler));
     }
 
+    /// <param name="handler">Handler invocado al cambiar props del player.</param>
     Task<IDisposable> IMprisPlayer.WatchPropertiesAsync(Action<PropertyChanges> handler)
     {
         PlayerChanged += handler;
         return Task.FromResult<IDisposable>(new Unsubscriber(() => PlayerChanged -= handler));
     }
 
-    // PÚBLICOS a propósito: el codegen escanea con type.GetMethods() y los métodos
-    // de implementación explícita son invisibles para esa llamada.
-
+    /// <param name="property">Nombre de la prop a leer.</param>
     public Task<object> GetAsync(string property)
     {
         var all = GetAllProperties();
@@ -513,6 +552,8 @@ public class MprisService : IMprisRoot, IMprisPlayer
         return Task.FromResult(v);
     }
 
+    /// <param name="property">Nombre de la prop a escribir.</param>
+    /// <param name="value">Nuevo valor.</param>
     public Task SetAsync(string property, object value)
     {
         switch (property)
@@ -537,9 +578,9 @@ public class MprisService : IMprisRoot, IMprisPlayer
         return Task.CompletedTask;
     }
 
-    public Task<IDictionary<string, object>> GetAllAsync()
-        => Task.FromResult(GetAllProperties());
+    public Task<IDictionary<string, object>> GetAllAsync() => Task.FromResult(GetAllProperties());
 
+    /// <param name="handler">Handler invocado al cambiar props.</param>
     public Task<IDisposable> WatchPropertiesAsync(Action<PropertyChanges> handler)
     {
         PlayerChanged += handler;
@@ -575,19 +616,10 @@ public class MprisService : IMprisRoot, IMprisPlayer
             ["Rate"] = 1.0
         };
 
-        // Rate — siempre presente. Si no se soporta, forzado a 1.0.
-        if (capabilities.SupportsRate)
-            d["Rate"] = source.Rate;
-
-        // Opcionales
-        if (capabilities.SupportsLoop)
-            d["LoopStatus"] = source.LoopStatus;
-
-        if (capabilities.SupportsShuffle)
-            d["Shuffle"] = source.Shuffle;
-
-        if (capabilities.SupportsVolume)
-            d["Volume"] = source.Volume;
+        if (capabilities.SupportsRate) d["Rate"] = source.Rate;
+        if (capabilities.SupportsLoop) d["LoopStatus"] = source.LoopStatus;
+        if (capabilities.SupportsShuffle) d["Shuffle"] = source.Shuffle;
+        if (capabilities.SupportsVolume) d["Volume"] = source.Volume;
 
         return d;
     }

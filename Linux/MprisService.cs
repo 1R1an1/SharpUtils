@@ -301,8 +301,17 @@ public class MprisService : IMprisRoot, IMprisPlayer
     /// <param name="src">Fuente de estado y acciones.</param>
     /// <param name="caps">Capabilities declaradas por la app.</param>
     /// <param name="opts">Nombre y display name.</param>
+    /// <exception cref="InvalidOperationException">MPRIS ya está corriendo en este proceso.</exception>
+    /// <exception cref="ArgumentNullException">Si <paramref name="src"/>, <paramref name="caps"/> o <paramref name="opts"/> es null.</exception>
     public static async Task StartAsync(MprisSource src, MprisCapabilities caps, MprisOptions opts)
     {
+        if (instance != null)
+            throw new InvalidOperationException("MPRIS is already running");
+
+        ArgumentNullException.ThrowIfNull(src);
+        ArgumentNullException.ThrowIfNull(caps);
+        ArgumentNullException.ThrowIfNull(opts);
+
         source = src;
         capabilities = caps;
         options = opts;
@@ -353,9 +362,11 @@ public class MprisService : IMprisRoot, IMprisPlayer
     /// Emite PropertiesChanged si el estado del source o las capabilities cambiaron.
     /// Llamar desde la app cada vez que cualquier estado pueda haber cambiado.
     /// </summary>
+    /// <exception cref="InvalidOperationException">MPRIS no fue iniciado.</exception>
     public static void Update()
     {
-        if (source == null) return;
+        if (source == null)
+            throw new InvalidOperationException("MPRIS not started");
 
         var changed = new Dictionary<string, object>();
         bool trackChanged = false;

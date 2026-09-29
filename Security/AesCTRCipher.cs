@@ -1,4 +1,6 @@
-﻿using System;
+﻿/* SPDX-License-Identifier: MPL-2.0
+ * Copyright (c) 2026 1R1an1 */
+using System;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;

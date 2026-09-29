@@ -207,6 +207,31 @@ public class MprisService : IMprisRoot, IMprisPlayer
         public void Dispose() { _onDispose?.Invoke(); _onDispose = null; }
     }
 
+    /// <summary>
+    /// Devuelve el BusName a usar. Si "org.mpris.MediaPlayer2.{name}" está libre,
+    /// lo devuelve tal cual. Si está tomado, le pega el PID al final del nombre.
+    /// </summary>
+    static async Task<string> ResolveBusNameAsync(Connection conn, string name)
+    {
+        string baseName = "org.mpris.MediaPlayer2." + name;
+
+        // Preguntar al bus si el nombre ya tiene owner.
+        // Hablamos directo con org.freedesktop.DBus.NameHasOwner.
+        const string dbusService = "org.freedesktop.DBus";
+        var dbusPath = new ObjectPath("/org/freedesktop/DBus");
+        var dbusIface = conn.CreateProxy<IDBus>(dbusService, dbusPath);
+        bool taken = await dbusIface.NameHasOwnerAsync(baseName);
+
+        return taken ? baseName + Environment.ProcessId : baseName;
+    }
+
+    // Proxy mínimo para hablar con org.freedesktop.DBus (solo lo que necesitamos).
+    [DBusInterface("org.freedesktop.DBus")]
+    public interface IDBus : IDBusObject
+    {
+        Task<bool> NameHasOwnerAsync(string name);
+    }
+
     static Connection connection;
     static MprisService instance;
     public static MprisSource source { get; set; }
@@ -237,7 +262,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
 
     MprisService() { }
 
-    static string BusName => "org.mpris.MediaPlayer2." + options.Name;
+    static string BusName;
     static string Identity => string.IsNullOrEmpty(options.DisplayName) ? options.Name : options.DisplayName;
     static string DesktopEntry => options.Name;
     static string CacheDir => "/tmp/" + options.Name;
@@ -279,6 +304,8 @@ public class MprisService : IMprisRoot, IMprisPlayer
         await connection.ConnectAsync();
         instance = new MprisService();
         await connection.RegisterObjectAsync(instance);
+
+        BusName = await ResolveBusNameAsync(connection, options.Name);
         await connection.RegisterServiceAsync(BusName);
     }
 

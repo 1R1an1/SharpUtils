@@ -338,12 +338,12 @@ public class MprisService : IMprisRoot, IMprisPlayer
         shownCanControl = caps.CanControl;
 
         connection = new Connection(Address.Session);
-        await connection.ConnectAsync();
+        await connection.ConnectAsync().ConfigureAwait(false);
         instance = new MprisService();
-        await connection.RegisterObjectAsync(instance);
+        await connection.RegisterObjectAsync(instance).ConfigureAwait(false);
 
-        BusName = await ResolveBusNameAsync(connection, options.Name);
-        await connection.RegisterServiceAsync(BusName);
+        BusName = await ResolveBusNameAsync(connection, options.Name).ConfigureAwait(false);
+        await connection.RegisterServiceAsync(BusName).ConfigureAwait(false);
     }
 
     /// <summary>Resuelve el BusName único, agregando el PID si el base está tomado.</summary>

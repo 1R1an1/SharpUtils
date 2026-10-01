@@ -2,6 +2,7 @@
  * Copyright (c) 2026 1R1an1 */
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -87,11 +88,11 @@ public static class LinuxKRL
         return (st.st_mode & S_IFMT) == S_IFREG;
     }
 
-    public static IReadOnlyList<string> GetReadableFiles(string dir)
+    public static ReadOnlyCollection<string> GetReadableFiles(string dir, Func<string, bool> filter = null)
     {
         var list = new List<string>();
-        Walk(dir, list);
-        return list;
+        Walk(dir, list, filter);
+        return list.AsReadOnly();
     }
 
 
@@ -109,7 +110,7 @@ public static class LinuxKRL
         return Encoding.UTF8.GetString(buf, 0, len < 0 ? maxLen : len);
     }
 
-    private static void Walk(string dir, List<string> list)
+    private static void Walk(string dir, List<string> list, Func<string, bool> filter = null)
     {
         IntPtr dp = opendir(dir);
         if (dp == IntPtr.Zero)
@@ -134,7 +135,7 @@ public static class LinuxKRL
 
                 if (dType == DT_DIR)
                     Walk(full, list);
-                else if (CanReadFile(full))
+                else if (CanReadFile(full) && (filter == null || filter(full)))
                     list.Add(full);
             }
         }

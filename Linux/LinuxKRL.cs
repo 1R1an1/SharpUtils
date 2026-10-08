@@ -134,7 +134,7 @@ public static class LinuxKRL
                 string full = prefix + name;
 
                 if (dType == DT_DIR)
-                    Walk(full, list);
+                    Walk(full, list, filter);
                 else if (CanReadFile(full) && (filter == null || filter(full)))
                     list.Add(full);
             }

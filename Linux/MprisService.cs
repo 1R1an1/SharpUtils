@@ -286,8 +286,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public static long SeekThresholdUs { get; set; } = 1_000_000;
 
     private static bool shownCanQuit, shownCanPlay, shownCanPause,
-                shownCanSeek, shownCanGoNext, shownCanGoPrevious, shownCanStop,
-                shownCanControl;
+                shownCanSeek, shownCanGoNext, shownCanGoPrevious, shownCanStop;
 
     static event Action<PropertyChanges> PlayerChanged;
     static event Action<long> Seeked;
@@ -339,7 +338,6 @@ public class MprisService : IMprisRoot, IMprisPlayer
         shownCanGoNext = caps.CanGoNext;
         shownCanGoPrevious = caps.CanGoPrevious;
         shownCanStop = caps.CanStop;
-        shownCanControl = caps.CanControl;
 
         connection = new Connection(Address.Session);
         await connection.ConnectAsync().ConfigureAwait(false);
@@ -348,6 +346,10 @@ public class MprisService : IMprisRoot, IMprisPlayer
 
         BusName = await ResolveBusNameAsync(connection, options.Name).ConfigureAwait(false);
         await connection.RegisterServiceAsync(BusName).ConfigureAwait(false);
+
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => { if (File.Exists(lastCoverFile)) File.Delete(lastCoverFile); };
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => { if (File.Exists(lastCoverFile)) File.Delete(lastCoverFile); };
+        Console.CancelKeyPress += (_, _) => { if (File.Exists(lastCoverFile)) File.Delete(lastCoverFile); };
     }
 
     /// <summary>Resuelve el BusName único, agregando el PID si el base está tomado.</summary>
@@ -391,7 +393,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
                 if (!string.IsNullOrWhiteSpace(lastCoverFile))
                     File.Delete(lastCoverFile);
 
-                string file = Path.Combine(CacheDir, $"cover-{source.CoverHashHex}.png");
+                string file = Path.Combine(CacheDir, $"cover-{Environment.ProcessId}{Environment.TickCount64}.png");
                 File.WriteAllBytes(file, source.CoverBytes);
                 coverUri = new Uri(file).AbsoluteUri;
                 lastCoverFile = file;

@@ -276,6 +276,9 @@ public class MprisService : IMprisRoot, IMprisPlayer
     /// <summary>Última posición emitida vía Seeked.</summary>
     public static long shownPositionUs { get; private set; } = 0;
 
+    /// <summary>Última duración emitida vía Metadata.</summary>
+    public static long shownDurationUs { get; private set; } = 0;
+
     /// <summary>
     /// Umbral para emitir Seeked: si la posición cambió más de esto entre
     /// llamadas a Update(), se asume que fue un seek (no avance natural).
@@ -325,6 +328,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
         shownVolume = src.Volume;
         shownRate = src.Rate;
         shownPositionUs = src.PositionUs;
+        shownDurationUs = src.DurationUs;
         trackId = new ObjectPath(TrackIdPrefix + "0");
 
         // Snapshot inicial de capabilities
@@ -369,13 +373,13 @@ public class MprisService : IMprisRoot, IMprisPlayer
             throw new InvalidOperationException("MPRIS not started");
 
         var changed = new Dictionary<string, object>();
-        bool trackChanged = false;
+        bool metadataDirty = false;
 
         if (source.Title != shownTitle)
         {
             shownTitle = source.Title;
             trackId = new ObjectPath(TrackIdPrefix + Environment.TickCount64);
-            trackChanged = true;
+            metadataDirty = true;
         }
 
         if (source.CoverHashHex != lastCoverHash && !string.IsNullOrWhiteSpace(source.CoverHashHex) && source.CoverBytes?.Length > 0)
@@ -394,19 +398,28 @@ public class MprisService : IMprisRoot, IMprisPlayer
             }
             catch { }
             lastCoverHash = source.CoverHashHex;
-            changed["Metadata"] = BuildMetadata();
+            metadataDirty = true;
         }
         else if (source.CoverHashHex != lastCoverHash)
         {
             coverUri = null;
-            changed["Metadata"] = BuildMetadata();
+            metadataDirty = true;
         }
 
-        if (trackChanged || source.Artist != shownArtist)
+        if (source.Artist != shownArtist)
         {
             shownArtist = source.Artist;
-            changed["Metadata"] = BuildMetadata();
+            metadataDirty = true;
         }
+
+        if (source.DurationUs != shownDurationUs)
+        {
+            shownDurationUs = source.DurationUs;
+            metadataDirty = true;
+        }
+
+        if (metadataDirty)
+            changed["Metadata"] = BuildMetadata();
 
         if (source.IsPlaying != shownPlaying)
         {
@@ -478,11 +491,6 @@ public class MprisService : IMprisRoot, IMprisPlayer
             shownCanStop = capabilities.CanStop;
             changed["CanStop"] = shownCanStop;
         }
-        if (capabilities.CanControl != shownCanControl)
-        {
-            shownCanControl = capabilities.CanControl;
-            changed["CanControl"] = shownCanControl;
-        }
 
         if (changed.Count > 0)
             PlayerChanged?.Invoke(new PropertyChanges { Changed = changed, Invalidated = Array.Empty<string>() });
@@ -511,6 +519,7 @@ public class MprisService : IMprisRoot, IMprisPlayer
     public Task SeekAsync(long offsetUs)
     {
         source.Seek(offsetUs);
+        shownPositionUs = source.PositionUs;
         Seeked?.Invoke(source.PositionUs);
         return Task.CompletedTask;
     }
@@ -522,7 +531,8 @@ public class MprisService : IMprisRoot, IMprisPlayer
         if (tid == trackId && positionUs >= 0)
         {
             source.SetPosition(positionUs);
-            Seeked?.Invoke(positionUs);
+            shownPositionUs = source.PositionUs;
+            Seeked?.Invoke(source.PositionUs);
         }
         return Task.CompletedTask;
     }
@@ -567,25 +577,32 @@ public class MprisService : IMprisRoot, IMprisPlayer
     /// <param name="value">Nuevo valor.</param>
     public Task SetAsync(string property, object value)
     {
+        var changed = new Dictionary<string, object>();
         switch (property)
         {
             case "LoopStatus" when capabilities.SupportsLoop:
                 source.LoopStatus = (string)value;
                 source.LoopChanged(source.LoopStatus);
+                changed["LoopStatus"] = source.LoopStatus;
                 break;
             case "Shuffle" when capabilities.SupportsShuffle:
                 source.Shuffle = Convert.ToBoolean(value);
                 source.ShuffleChanged(source.Shuffle);
+                changed["Shuffle"] = source.Shuffle;
                 break;
             case "Volume" when capabilities.SupportsVolume:
                 source.Volume = Convert.ToDouble(value);
                 source.VolumeChanged(source.Volume);
+                changed["Volume"] = source.Volume;
                 break;
             case "Rate" when capabilities.SupportsRate:
                 source.Rate = Convert.ToDouble(value);
                 source.RateChanged(source.Rate);
+                changed["Rate"] = source.Rate;
                 break;
         }
+        if (changed.Count > 0)
+            PlayerChanged?.Invoke(new PropertyChanges { Changed = changed, Invalidated = Array.Empty<string>() });
         return Task.CompletedTask;
     }
 

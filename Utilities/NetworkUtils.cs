@@ -6,8 +6,15 @@ using System.Net.Sockets;
 
 namespace SharpUtils.Utilities
 {
+	/// <summary>
+	/// Helpers de red.
+	/// </summary>
 	public static class NetworkUtils
 	{
+		/// <summary>
+		/// Devuelve la primera IPv4 LAN "real" del equipo, ignorando VPN, adaptadores virtuales,
+		/// túneles y loopback. Si no encuentra ninguna, cae a <see cref="IPAddress.Loopback"/>.
+		/// </summary>
 		public static IPAddress GetLocalIPv4()
 		{
 			foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())

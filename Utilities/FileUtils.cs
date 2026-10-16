@@ -5,30 +5,40 @@ using System.IO;
 
 namespace SharpUtils.Utilities
 {
+	/// <summary>
+	/// Utilidades de archivos.
+	/// </summary>
 	public static class FileUtils
 	{
-		// Unidades de tamaño — privado porque solo se usa internamente
-		private enum SizeUnit { B, KB, MB, GB }
+		private enum SizeUnit { B, KB, MB, GB, TB }
 
+		/// <summary>
+		/// Calcula un tamaño de buffer óptimo para leer/escribir un archivo.
+		/// </summary>
 		public static int CalculateBufferSize(long fileSize)
 		{
 			int size = (int)(fileSize / 100);
-			return Clamp(size, 16 * 1024, 256 * 1024);
+			return Math.Clamp(size, 16 * 1024, 256 * 1024);
 		}
 
+		/// <summary>
+		/// Formatea una cantidad de bytes como string legible ej: 512 B, 643 KB, 1.50 MB, 1.76 GB, 3.46 TB.
+		/// </summary>
 		public static string FormatFileSize(long bytes)
 		{
 			var (unit, value) = GetSizeUnit(bytes);
 			return $"{value:F2} {unit}";
 		}
 
-		public static string FormatSpeed(double bytesPerSecond)
-		{
-			if (bytesPerSecond >= 1024 * 1024)
-				return $"{bytesPerSecond / (1024.0 * 1024):F2} MB/s";
-			return $"{bytesPerSecond / 1024.0:F2} KB/s";
-		}
+		/// <summary>
+		/// Formatea una velocidad en bytes/segundo como string legible, ej: 5.65 MB/s, 266 KB/s, 800 B/s.
+		/// </summary>
+		public static string FormatSpeed(long bytesPerSecond)
+			=> $"{FormatFileSize(bytesPerSecond)}/s";
 
+		/// <summary>
+		/// Formatea un <see cref="TimeSpan"/> como string compacto, ej: "1h 5m 30s", "5m 30s", "30s"
+		/// </summary>
 		public static string FormatTime(TimeSpan t)
 		{
 			if (t.TotalHours >= 1)
@@ -42,21 +52,19 @@ namespace SharpUtils.Utilities
 
 		private static (SizeUnit unit, double value) GetSizeUnit(long bytes)
 		{
+			if (bytes >= 1024L * 1024 * 1024 * 1024) return (SizeUnit.TB, bytes / (1024.0 * 1024 * 1024 * 1024));
 			if (bytes >= 1024L * 1024 * 1024) return (SizeUnit.GB, bytes / (1024.0 * 1024 * 1024));
 			if (bytes >= 1024 * 1024) return (SizeUnit.MB, bytes / (1024.0 * 1024));
 			if (bytes >= 1024) return (SizeUnit.KB, bytes / 1024.0);
 			return (SizeUnit.B, bytes);
 		}
 
-		private static int Clamp(int value, int min, int max)
-		{
-			if (value < min) return min;
-			if (value > max) return max;
-			return value;
-		}
-
 		// -------------------------------------------------------------------------
 
+		/// <summary>
+		/// Devuelve una ruta de archivo que no existe todavía, agregando " (1)", " (2)", etc.
+		/// antes de la extensión si ya existe.
+		/// </summary>
 		public static string GetAvailableFileName(string fullPath)
 		{
 			string directory = Path.GetDirectoryName(fullPath) ?? "";
@@ -75,6 +83,10 @@ namespace SharpUtils.Utilities
 			return result;
 		}
 
+		/// <summary>
+		/// Valida que <paramref name="userFileName"/> caiga dentro de <paramref name="baseFolder"/>
+		/// y no escape con ".." o rutas absolutas.
+		/// </summary>
 		public static bool TryGetSafeFilePath(string baseFolder, string userFileName, out string safePath)
 		{
 			safePath = null;

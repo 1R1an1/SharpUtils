@@ -4,13 +4,19 @@ using System.Diagnostics;
 
 namespace SharpUtils.Utilities;
 
+/// <summary>
+/// Tracker de velocidad de transferencia de bytes por segundo.
+/// </summary>
 public class SpeedTracker
 {
     private long _bytesThisSecond;
-    private double _currentSpeed;
+    private long _currentSpeed;
     private readonly Stopwatch _timer = Stopwatch.StartNew();
 
-    public double Add(long bytes)
+    /// <summary>
+    /// Acumula los bytes transferidos y devuelve la velocidad del último segundo en bytes/segundo.
+    /// </summary>
+    public long Add(long bytes)
     {
         _bytesThisSecond += bytes;
 

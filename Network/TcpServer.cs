@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Net;
 using System.Net.Security;
@@ -44,7 +45,7 @@ public class TcpServer : IDisposable
 
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _cts = new();
-    private readonly ConcurrentDictionary<string, TcpClient> _clients = new();
+    private readonly ConcurrentDictionary<IPEndPoint, TcpClient> _clients = new();
 
     /// <summary>
     /// Diccionario público que asocia cada <see cref="TcpClient"/> con su <see cref="Stream"/> (SslStream) desencriptado.
@@ -85,17 +86,17 @@ public class TcpServer : IDisposable
     /// Se dispara cuando un cliente pasa el handshake (o conecta, si <see cref="EnableAuth"/> es false).
     /// Recibe la IP:Puerto del cliente.
     /// </summary>
-    public event Action<string> OnClientConnected;
+    public event Action<IPEndPoint> OnClientConnected;
 
     /// <summary>
     /// Se dispara cuando un cliente se desconecta. Recibe la IP:Puerto del cliente.
     /// </summary>
-    public event Action<string> OnClientDisconnected;
+    public event Action<IPEndPoint> OnClientDisconnected;
 
     /// <summary>
-    /// Se dispara ante errores del server (cliente que cae, excepciones, etc.). Recibe el mensaje.
+    /// Se dispara ante errores del server (cliente que cae, excepciones, etc.). Recibe la excepción.
     /// </summary>
-    public event Action<string> OnError;
+    public event Action<Exception> OnError;
 
     /// <summary>
     /// Se dispara cuando la autenticacion esta activa y falla al autenticar.
@@ -142,31 +143,32 @@ public class TcpServer : IDisposable
     }
 
     /// <summary>
-    /// Cierra un cliente por IP. Dispara <see cref="OnClientDisconnected"/> vía el finally del handler.
+    /// Cierra un cliente.
     /// </summary>
     /// <param name="ip">IP:Puerto del cliente a desconectar.</param>
-    public void DisconnectClient(string ip)
+    /// <returns>True si el cliente existía y fue cerrado, false si no se encontró.</returns>
+    public bool TryDisconnectClient(IPEndPoint ip)
     {
         if (_clients.TryGetValue(ip, out var client))
+        {
             client.Close();
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
-    /// Obtiene el <see cref="TcpClient"/> de una IP, o null si no está conectado.
+    /// Obtiene el <see cref="TcpClient"/> de un cliente.
     /// </summary>
     /// <param name="ip">IP:Puerto del cliente.</param>
-    /// <returns>El TcpClient o null.</returns>
-    public TcpClient GetClient(string ip)
-    {
-        _clients.TryGetValue(ip, out var c);
-        return c;
-    }
+    /// <param name="client">El TcpClient del cliente, null si no se encontro el cliente.</param>
+    /// <returns>True si el cliente existe, false de lo contrario.</returns>
+    public bool TryGetClient(IPEndPoint ip, out TcpClient client) => _clients.TryGetValue(ip, out client);
 
     /// <summary>
-    /// IPs (con puerto) de todos los clientes conectados.
+    /// Obtiene el diccionario de solo lectura de todos los clientes.
     /// </summary>
-    public ICollection<string> ClientIps => _clients.Keys;
-    public ICollection<TcpClient> Clients => _clients.Values;
+    public ReadOnlyDictionary<IPEndPoint, TcpClient> Clients => _clients.AsReadOnly();
 
     // -----------------------------------------------------------------------
 
@@ -178,23 +180,22 @@ public class TcpServer : IDisposable
             try
             {
                 client = await _listener.AcceptTcpClientAsync(_cts.Token);
+                ThreadPool.QueueUserWorkItem(n => _ = HandleClientAsync(client));
             }
             catch (OperationCanceledException) { break; }
             catch (SocketException) { break; } // Stop() fue llamado
             catch (Exception ex)
             {
                 if (!_cts.Token.IsCancellationRequested)
-                    OnError?.Invoke($"Error aceptando cliente: {ex.Message}");
+                    OnError?.Invoke(ex);
                 break;
             }
-
-            ThreadPool.QueueUserWorkItem(async _ => await HandleClientAsync(client));
         }
     }
 
     private async Task HandleClientAsync(TcpClient client)
     {
-        string ip = client.Client.RemoteEndPoint?.ToString() ?? "?";
+        IPEndPoint ip = (IPEndPoint)client.Client.RemoteEndPoint ?? null;
         bool connectedEventSent = false;
         client.NoDelay = true;
 
@@ -235,7 +236,7 @@ public class TcpServer : IDisposable
         catch (Exception ex)
         {
             // EndOfStreamException, IOException, SocketException, etc. → cliente caído
-            OnError?.Invoke(ex.Message);
+            OnError?.Invoke(ex);
         }
         finally
         {
@@ -316,11 +317,14 @@ public class TcpServer : IDisposable
     private static X509Certificate2 GenerateSelfSignedCert()
     {
         using var rsa = RSA.Create(2048);
-        var req = new CertificateRequest("CN=AudioRouterPC", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var req = new CertificateRequest("CN=SharpUtils", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         // Válido por 1 año
         return req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
     }
 
+    /// <summary>
+    /// Cierra todas las conexiones y streams de todos los clientes, detiene el accept loop y libera los recursos.
+    /// </summary>
     public void Dispose()
     {
         Stop();
@@ -337,7 +341,6 @@ public class TcpServer : IDisposable
             stream?.Dispose();
         }
         SecureStreams.Clear();
-
 
         _listener.Dispose();
         _cts.Dispose();

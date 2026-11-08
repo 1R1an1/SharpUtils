@@ -52,7 +52,7 @@ public static class TcpConnection
     }
 
     /// <summary>
-    /// Conecta a un servidor con handshake asimétrico ECDSA P-256 usando la clave privada del cliente.
+    /// Conecta a un servidor con handshake asimétrico ECDSA P-256 DER ASN.1 usando la clave privada del cliente.
     /// </summary>
     /// <param name="clientFingerprint">SHA-256 de la pública del cliente (32 bytes).</param>
     /// <param name="loadPrivateKey">Devuelve los bytes de la privada en formato ECPrivateKey (SEC1).</param>
@@ -120,7 +120,7 @@ public static class TcpConnection
     }
 
     /// <summary>
-    /// Handshake asimétrico con ECDSA P-256.
+    /// Handshake asimétrico con ECDSA P-256 DER ASN.1.
     /// </summary>
     /// <param name="clientFingerprint">SHA-256 de la pública del cliente (32 bytes).</param>
     /// <param name="loadPrivateKey">Devuelve los bytes de la privada en formato ECPrivateKey (SEC1).</param>
@@ -149,7 +149,7 @@ public static class TcpConnection
             {
                 using var ecdsa = ECDsa.Create();
                 ecdsa.ImportECPrivateKey(privKey, out _);
-                signature = ecdsa.SignData(challenge, HashAlgorithmName.SHA256);
+                signature = ecdsa.SignData(challenge, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
             }
             finally
             {

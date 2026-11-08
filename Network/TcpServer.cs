@@ -32,7 +32,7 @@ public enum AuthMode
     /// </summary>
     PasswordChallenge,
     /// <summary>
-    /// Handshake asimétrico con firma ECDSA P-256. Cada cliente tiene su propia clave privada.
+    /// Handshake asimétrico con firma ECDSA P-256 DER ASN.1. Cada cliente tiene su propia clave privada.
     /// </summary>
     AsymmetricKeys
 }
@@ -337,7 +337,7 @@ public class TcpServer : IDisposable
     }
 
     /// <summary>
-    /// Handshake asimétrico con ECDSA P-256 usando <see cref="AuthorizedPublicKeys"/>.
+    /// Handshake asimétrico con ECDSA P-256 DER ASN.1 usando <see cref="AuthorizedPublicKeys"/>.
     /// <code> Wire:
     ///   1. Client → Server: 32 bytes (SHA-256 de la pública del cliente = fingerprint)
     ///   2. Server busca la pública en AuthorizedPublicKeys. Si no está → cierra sin mandar nada.
@@ -396,7 +396,7 @@ public class TcpServer : IDisposable
             // 5. Validar firma con la pública del cliente
             using var ecdsa = ECDsa.Create();
             ecdsa.ImportSubjectPublicKeyInfo(pubKeyBytes, out _);
-            bool ok = ecdsa.VerifyData(challenge, signature, HashAlgorithmName.SHA256);
+            bool ok = ecdsa.VerifyData(challenge, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
 
             if (!ok)
             {

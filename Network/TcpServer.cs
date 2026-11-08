@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (c) 2026 1R1an1 */
 using System;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -18,28 +19,31 @@ using System.Threading.Tasks;
 namespace SharpUtils.Network;
 
 /// <summary>
-/// Servidor TCP async con handshake de autenticación opcional (challenge-response con SHA-256).
+/// Modo de autenticación que exige el <see cref="TcpServer"/> a cada cliente que conecta.
 /// </summary>
-/// <remarks>
-/// Si <see cref="EnableAuth"/> es true (default), cada cliente que conecta tiene que pasar
-/// el handshake antes de que se dispare <see cref="OnClientAsync"/>. Si el handshake falla
-/// o pasa de 5 segundos, el server cierra el socket sin mandar nada y sin disparar
-/// <see cref="OnClientConnected"/>.
-/// </remarks>
-/// <example>
-/// <code>
-/// var server = new TcpServer(IPAddress.Any, 5502);
-/// server.Password = "mi-secreto";   // opcional, sino usa la default
-/// server.OnClientAsync = async client => { /* tu loop */ };
-/// server.Start();
-/// </code>
-/// </example>
+public enum AuthMode
+{
+    /// <summary>
+    /// No exige handshake. Cualquier cliente que conecta se acepta.
+    /// </summary>
+    None,
+    /// <summary>
+    /// Handshake challenge-response con SHA-256 y password compartido.
+    /// </summary>
+    PasswordChallenge,
+    /// <summary>
+    /// Handshake asimétrico con firma ECDSA P-256. Cada cliente tiene su propia clave privada.
+    /// </summary>
+    AsymmetricKeys
+}
+
+/// <summary>
+/// Servidor TCP async con TLS opcional y <see cref="AuthMode"/> configurable.
+/// </summary>
 public class TcpServer : IDisposable
 {
     /// <summary>
     /// Password por defecto compartida por <see cref="TcpServer"/> y <see cref="TcpConnection"/>.
-    /// Es un literal hardcodeado para que ambas partes tengan la misma siempre, sin importar
-    /// cuántas veces se ejecute la app. Cambiala por la tuya si querés.
     /// </summary>
     public const string DefaultPassword = "K7$mQ9!xL2#vR8pZ4@wN1cB6&hT3yF0j";
 
@@ -48,42 +52,43 @@ public class TcpServer : IDisposable
     private readonly ConcurrentDictionary<IPEndPoint, TcpClient> _clients = new();
 
     /// <summary>
-    /// Diccionario público que asocia cada <see cref="TcpClient"/> con su <see cref="Stream"/> (SslStream) desencriptado.
-    /// Solo se llena si <see cref="EnableTLS"/> es true. Útil para acceder al stream seguro desde otras partes del código.
+    /// Asocia cada <see cref="TcpClient"/> con su <see cref="Stream"/> desencriptado. Solo se llena si <see cref="EnableTLS"/> es true.
     /// </summary>
     public readonly ConcurrentDictionary<TcpClient, Stream> SecureStreams = new();
 
     /// <summary>
-    /// El certificado de encriptación autofirmado generado en memoria.
+    /// Certificado autofirmado en memoria usado para TLS.
     /// </summary>
     private readonly X509Certificate2 _serverCert;
 
     /// <summary>
-    /// Si true, cada cliente debe pasar el handshake antes de que se dispare
-    /// <see cref="OnClientAsync"/>. Se setea por constructor.
+    /// Modo de autenticación exigido a cada cliente que conecta.
     /// </summary>
-    public bool EnableAuth { get; }
+    public AuthMode AuthMode { get; }
 
     /// <summary>
-    /// Si true (default), la conexión se envuelve en un <see cref="SslStream"/> para encriptar el tráfico (TLS).
-    /// Si false, los datos viajan en plano sobre el <see cref="NetworkStream"/>.
+    /// Si true, la conexión se envuelve en un <see cref="SslStream"/>. Si false, los datos viajan en plano.
     /// </summary>
     public bool EnableTLS { get; }
 
     /// <summary>
-    /// Password usada por el handshake. Por defecto es <see cref="DefaultPassword"/>.
-    /// Cambiala antes de <see cref="Start"/> si querés otra.
+    /// Password usada en <see cref="AuthMode.PasswordChallenge"/>.
     /// </summary>
     public string Password { get; set; } = DefaultPassword;
 
     /// <summary>
-    /// Callback que implementás vos. Recibe el <see cref="TcpClient"/> ya autenticado
-    /// (si <see cref="EnableAuth"/> es true). Armás tu loop de lectura/escritura con tu protocolo.
+    /// Claves públicas autorizadas para <see cref="AuthMode.AsymmetricKeys"/>.
+    /// Clave: hex minúsculo del SHA-256 de la pública del cliente. Valor: SPKI bytes.
+    /// </summary>
+    public ConcurrentDictionary<string, byte[]> AuthorizedPublicKeys { get; set { if (value == null) return; else field = value; } } = new();
+
+    /// <summary>
+    /// Loop de manejo de cada cliente autenticado. Recibe el <see cref="TcpClient"/> y su <see cref="Stream"/>.
     /// </summary>
     public Func<TcpClient, Stream, Task> OnClientAsync;
 
     /// <summary>
-    /// Se dispara cuando un cliente pasa el handshake (o conecta, si <see cref="EnableAuth"/> es false).
+    /// Se dispara cuando un cliente pasa el handshake (o conecta, si <see cref="AuthMode"/> es <see cref="AuthMode.None"/>).
     /// Recibe la IP:Puerto del cliente.
     /// </summary>
     public event Action<IPEndPoint> OnClientConnected;
@@ -94,26 +99,24 @@ public class TcpServer : IDisposable
     public event Action<IPEndPoint> OnClientDisconnected;
 
     /// <summary>
-    /// Se dispara ante errores del server (cliente que cae, excepciones, etc.). Recibe la excepción.
+    /// Se dispara ante errores del server. Recibe la excepción.
     /// </summary>
     public event Action<Exception> OnError;
 
     /// <summary>
-    /// Se dispara cuando la autenticacion esta activa y falla al autenticar.
+    /// Se dispara cuando el handshake de un cliente falla.
     /// </summary>
     public event Action<TcpClient> OnAuthFail;
 
     /// <summary>
     /// Crea un nuevo servidor.
     /// </summary>
-    /// <param name="ip">IP donde escuchar.</param>
-    /// <param name="port">Puerto donde escuchar.</param>
-    /// <param name="enableTLS">Si true (default), encripta la conexión usando TLS con un certificado autofirmado en memoria.</param>
-    /// <param name="enableAuth">Si true (default), exige handshake a cada cliente.</param>
-    public TcpServer(IPAddress ip, int port, bool enableTLS = true, bool enableAuth = true)
+    /// <param name="enableTLS">Si true, encripta la conexión con TLS.</param>
+    /// <param name="authMode">Modo de autenticación exigido a cada cliente.</param>
+    public TcpServer(IPAddress ip, int port, bool enableTLS = true, AuthMode authMode = AuthMode.PasswordChallenge)
     {
         _listener = new TcpListener(ip, port);
-        EnableAuth = enableAuth;
+        AuthMode = authMode;
         EnableTLS = enableTLS;
 
         // Generar certificado autofirmado al nacer la clase si TLS está activado
@@ -122,13 +125,16 @@ public class TcpServer : IDisposable
     }
 
     /// <summary>
-    /// Arranca el accept loop en background. Lanza si EnableAuth es true y Password está vacía.
+    /// Arranca el accept loop en background.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Si EnableAuth es true y Password está vacía.</exception>
+    /// <exception cref="InvalidOperationException">Si el modo de auth requiere configuración faltante.</exception>
     public void Start()
     {
-        if (EnableAuth && string.IsNullOrEmpty(Password))
-            throw new InvalidOperationException("EnableAuth está en true pero Password está vacía.");
+        switch (AuthMode)
+        {
+            case AuthMode.PasswordChallenge when string.IsNullOrEmpty(Password):
+                throw new InvalidOperationException("AuthMode es PasswordChallenge pero Password está vacía.");
+        }
         _listener.Start();
         ThreadPool.QueueUserWorkItem(async _ => await AcceptLoopAsync());
     }
@@ -166,12 +172,15 @@ public class TcpServer : IDisposable
     public bool TryGetClient(IPEndPoint ip, out TcpClient client) => _clients.TryGetValue(ip, out client);
 
     /// <summary>
-    /// Obtiene el diccionario de solo lectura de todos los clientes.
+    /// Clientes actualmente conectados, como diccionario de solo lectura.
     /// </summary>
     public ReadOnlyDictionary<IPEndPoint, TcpClient> Clients => _clients.AsReadOnly();
 
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// Loop de aceptación de conexiones entrantes.
+    /// </summary>
     private async Task AcceptLoopAsync()
     {
         while (!_cts.Token.IsCancellationRequested)
@@ -193,6 +202,9 @@ public class TcpServer : IDisposable
         }
     }
 
+    /// <summary>
+    /// Maneja el ciclo de vida de un cliente: TLS, handshake, dispatch a <see cref="OnClientAsync"/>, cleanup.
+    /// </summary>
     private async Task HandleClientAsync(TcpClient client)
     {
         IPEndPoint ip = (IPEndPoint)client.Client.RemoteEndPoint ?? null;
@@ -213,7 +225,7 @@ public class TcpServer : IDisposable
 
             // Handshake antes de registrar al cliente o avisar que conectó.
             // Si falla, cerrar y chau — sin OnClientConnected, sin OnError, sin nada.
-            if (EnableAuth)
+            if (AuthMode != AuthMode.None)
             {
                 if (!DoHandshake(client, stream))
                 {
@@ -252,17 +264,32 @@ public class TcpServer : IDisposable
     }
 
     /// <summary>
-    /// Handshake challenge-response con SHA-256. Devuelve true si OK, false si falló.
-    /// Wire:
+    /// Ejecuta el handshake según el <see cref="AuthMode"/> configurado.
+    /// </summary>
+    /// <param name="client">TcpClient para setear el ReceiveTimeout durante el handshake.</param>
+    /// <param name="stream">Stream ya encriptado sobre el que leer y escribir.</param>
+    /// <returns>True si la autenticación fue exitosa.</returns>
+    private bool DoHandshake(TcpClient client, Stream stream) => AuthMode switch
+    {
+        AuthMode.PasswordChallenge => DoPasswordHandshake(client, stream),
+        AuthMode.AsymmetricKeys => DoAsymmetricHandshake(client, stream),
+        AuthMode.None => true,
+        _ => throw new NotImplementedException(),
+    };
+
+    /// <summary>
+    /// Handshake challenge-response con SHA-256 y <see cref="Password"/>.
+    /// <code>Wire:
     ///   1. Server → Client: 16 bytes random (challenge)
     ///   2. Client → Server: 32 bytes SHA-256(challenge + password)
     ///   3. Server valida. Si OK → manda 1 byte 0x01. Si NO OK → cierra sin mandar nada.
     /// Timeout: 5s para que el cliente mande la respuesta.
+    /// </code>
     /// </summary>
-    /// <param name="client">El TcpClient para setear el ReceiveTimeout.</param>
-    /// <param name="stream">El SslStream ya encriptado sobre el que leer y escribir.</param>
+    /// <param name="client">TcpClient para setear el ReceiveTimeout durante el handshake.</param>
+    /// <param name="stream">Stream ya encriptado sobre el que leer y escribir.</param>
     /// <returns>True si la autenticación fue exitosa.</returns>
-    private bool DoHandshake(TcpClient client, Stream stream)
+    private bool DoPasswordHandshake(TcpClient client, Stream stream)
     {
         try
         {
@@ -310,10 +337,91 @@ public class TcpServer : IDisposable
     }
 
     /// <summary>
-    /// Genera un certificado X509 autofirmado en memoria usando RSA 2048.
-    /// No requiere archivos en disco y es válido por 1 año.
+    /// Handshake asimétrico con ECDSA P-256 usando <see cref="AuthorizedPublicKeys"/>.
+    /// <code> Wire:
+    ///   1. Client → Server: 32 bytes (SHA-256 de la pública del cliente = fingerprint)
+    ///   2. Server busca la pública en AuthorizedPublicKeys. Si no está → cierra sin mandar nada.
+    ///   3. Server → Client: 32 bytes random (challenge)
+    ///   4. Client → Server: [4 bytes length little-endian][firma del challenge con la privada del cliente]
+    ///   5. Server valida la firma con la pública. Si OK → manda 1 byte 0x01. Si NO OK → cierra.
+    /// Timeout: 5s para que el cliente mande fingerprint y firma.
+    /// </code>
     /// </summary>
-    /// <returns>Un <see cref="X509Certificate2"/> listo para usar con SslStream.</returns>
+    /// <param name="client">TcpClient para setear el ReceiveTimeout durante el handshake.</param>
+    /// <param name="stream">Stream ya encriptado sobre el que leer y escribir.</param>
+    /// <returns>True si la autenticación fue exitosa.</returns>
+    private bool DoAsymmetricHandshake(TcpClient client, Stream stream)
+    {
+        if (AuthorizedPublicKeys.Count < 1)
+        {
+            OnAuthFail?.Invoke(client);
+            return false;
+        }
+        try
+        {
+            client.ReceiveTimeout = 5000;
+
+            // 1. Leer fingerprint del cliente (32 bytes)
+            Span<byte> fingerprint = stackalloc byte[32];
+            PacketProtocol.ReadExact(stream, fingerprint);
+
+            // 2. Resolver pública por fingerprint
+            string fpHex = Convert.ToHexStringLower(fingerprint);
+            if (!AuthorizedPublicKeys.TryGetValue(fpHex, out byte[] pubKeyBytes))
+            {
+                client.ReceiveTimeout = 0;
+                OnAuthFail?.Invoke(client);
+                return false;
+            }
+
+            // 3. Generar y mandar challenge (32 bytes random)
+            Span<byte> challenge = stackalloc byte[32];
+            RandomNumberGenerator.Fill(challenge);
+            stream.Write(challenge);
+
+            // 4. Leer [4 bytes length little-endian][firma]
+            Span<byte> lenBuf = stackalloc byte[4];
+            PacketProtocol.ReadExact(stream, lenBuf);
+            int sigLen = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
+            if (sigLen is <= 0 or > 256)
+            {
+                client.ReceiveTimeout = 0;
+                OnAuthFail?.Invoke(client);
+                return false;
+            }
+
+            byte[] signature = new byte[sigLen];
+            PacketProtocol.ReadExact(stream, signature);
+
+            // 5. Validar firma con la pública del cliente
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportSubjectPublicKeyInfo(pubKeyBytes, out _);
+            bool ok = ecdsa.VerifyData(challenge, signature, HashAlgorithmName.SHA256);
+
+            if (!ok)
+            {
+                client.ReceiveTimeout = 0;
+                OnAuthFail?.Invoke(client);
+                return false;
+            }
+
+            // 6. Mandar OK (1 byte)
+            stream.WriteByte(0x01);
+            client.ReceiveTimeout = 0;
+            return true;
+        }
+        catch
+        {
+            try { if (client != null) client.ReceiveTimeout = 0; } catch { }
+            OnAuthFail?.Invoke(client);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Genera un certificado X509 autofirmado en memoria, válido por 1 año.
+    /// </summary>
+    /// <returns><see cref="X509Certificate2"/> para usar con <see cref="SslStream"/>.</returns>
     private static X509Certificate2 GenerateSelfSignedCert()
     {
         using var rsa = RSA.Create(2048);

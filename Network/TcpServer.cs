@@ -89,9 +89,9 @@ public class TcpServer : IDisposable
 
     /// <summary>
     /// Se dispara cuando un cliente pasa el handshake (o conecta, si <see cref="AuthMode"/> es <see cref="AuthMode.None"/>).
-    /// Recibe la IP:Puerto del cliente.
+    /// Recibe la IP:Puerto del cliente y su fingerPrintHex si <see cref="AuthMode"/> es <see cref="AuthMode.AsymmetricKeys"/>.
     /// </summary>
-    public event Action<IPEndPoint> OnClientConnected;
+    public event Action<IPEndPoint, string> OnClientConnected;
 
     /// <summary>
     /// Se dispara cuando un cliente se desconecta. Recibe la IP:Puerto del cliente.
@@ -225,13 +225,16 @@ public class TcpServer : IDisposable
 
             // Handshake antes de registrar al cliente o avisar que conectó.
             // Si falla, cerrar y chau — sin OnClientConnected, sin OnError, sin nada.
+            string fpHex = null;
             if (AuthMode != AuthMode.None)
             {
-                if (!DoHandshake(client, stream))
+                var (success, handshakeFpHex) = DoHandshake(client, stream);
+                if (!success)
                 {
                     try { client.Close(); } catch { }
                     return;
                 }
+                fpHex = handshakeFpHex;
             }
 
             _clients[ip] = client;
@@ -239,7 +242,7 @@ public class TcpServer : IDisposable
             if (EnableTLS)
                 SecureStreams[client] = stream;
 
-            OnClientConnected?.Invoke(ip);
+            OnClientConnected?.Invoke(ip, fpHex);
             connectedEventSent = true;
 
             if (OnClientAsync != null)
@@ -269,11 +272,11 @@ public class TcpServer : IDisposable
     /// <param name="client">TcpClient para setear el ReceiveTimeout durante el handshake.</param>
     /// <param name="stream">Stream ya encriptado sobre el que leer y escribir.</param>
     /// <returns>True si la autenticación fue exitosa.</returns>
-    private bool DoHandshake(TcpClient client, Stream stream) => AuthMode switch
+    private (bool success, string fpHEx) DoHandshake(TcpClient client, Stream stream) => AuthMode switch
     {
-        AuthMode.PasswordChallenge => DoPasswordHandshake(client, stream),
+        AuthMode.PasswordChallenge => (DoPasswordHandshake(client, stream), null),
         AuthMode.AsymmetricKeys => DoAsymmetricHandshake(client, stream),
-        AuthMode.None => true,
+        AuthMode.None => (true, null),
         _ => throw new NotImplementedException(),
     };
 
@@ -350,12 +353,12 @@ public class TcpServer : IDisposable
     /// <param name="client">TcpClient para setear el ReceiveTimeout durante el handshake.</param>
     /// <param name="stream">Stream ya encriptado sobre el que leer y escribir.</param>
     /// <returns>True si la autenticación fue exitosa.</returns>
-    private bool DoAsymmetricHandshake(TcpClient client, Stream stream)
+    private (bool, string) DoAsymmetricHandshake(TcpClient client, Stream stream)
     {
         if (AuthorizedPublicKeys.Count < 1)
         {
             OnAuthFail?.Invoke(client);
-            return false;
+            return (false, null);
         }
         try
         {
@@ -371,7 +374,7 @@ public class TcpServer : IDisposable
             {
                 client.ReceiveTimeout = 0;
                 OnAuthFail?.Invoke(client);
-                return false;
+                return (false, null);
             }
 
             // 3. Generar y mandar challenge (32 bytes random)
@@ -387,7 +390,7 @@ public class TcpServer : IDisposable
             {
                 client.ReceiveTimeout = 0;
                 OnAuthFail?.Invoke(client);
-                return false;
+                return (false, null);
             }
 
             byte[] signature = new byte[sigLen];
@@ -402,19 +405,19 @@ public class TcpServer : IDisposable
             {
                 client.ReceiveTimeout = 0;
                 OnAuthFail?.Invoke(client);
-                return false;
+                return (false, null);
             }
 
             // 6. Mandar OK (1 byte)
             stream.WriteByte(0x01);
             client.ReceiveTimeout = 0;
-            return true;
+            return (true, fpHex);
         }
         catch
         {
             try { if (client != null) client.ReceiveTimeout = 0; } catch { }
             OnAuthFail?.Invoke(client);
-            return false;
+            return (false, null);
         }
     }
 

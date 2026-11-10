@@ -46,27 +46,6 @@ public static class PacketProtocol
     public static LengthSize Length { get; set; } = LengthSize.Int32;
 
     /// <summary>
-    /// Lee exactamente la cantidad de bytes pedida del stream.
-    /// </summary>
-    /// <param name="stream">Stream del cual leer.</param>
-    /// <param name="buffer">Buffer destino. Se llenan exactamente buffer.Length bytes.</param>
-    /// <exception cref="EndOfStreamException">Se lanza si el socket se cierra antes de completar la lectura.</exception>
-    /// <remarks>
-    /// Es internal porque es un detalle de implementación. Los métodos públicos
-    /// (<see cref="ReadInt"/>, <see cref="ReadString"/>, <see cref="ReadBytes"/>) lo usan internamente.
-    /// </remarks>
-    internal static void ReadExact(Stream stream, Span<byte> buffer)
-    {
-        int total = 0;
-        while (total < buffer.Length)
-        {
-            int read = stream.Read(buffer[total..]);
-            if (read == 0) throw new EndOfStreamException("El socket se cerró.");
-            total += read;
-        }
-    }
-
-    /// <summary>
     /// Escribe un número entero al stream. Usa 4 u 8 bytes según <see cref="Length"/>,
     /// y el endianness según <see cref="Endian"/>.
     /// </summary>
@@ -100,7 +79,7 @@ public static class PacketProtocol
         if (Length == LengthSize.Int32)
         {
             Span<byte> buf = stackalloc byte[4];
-            ReadExact(stream, buf);
+            stream.ReadExactly(buf);
             return Endian == Endianness.Little
                 ? BinaryPrimitives.ReadInt32LittleEndian(buf)
                 : BinaryPrimitives.ReadInt32BigEndian(buf);
@@ -108,7 +87,7 @@ public static class PacketProtocol
         else
         {
             Span<byte> buf = stackalloc byte[8];
-            ReadExact(stream, buf);
+            stream.ReadExactly(buf);
             return Endian == Endianness.Little
                 ? BinaryPrimitives.ReadInt64LittleEndian(buf)
                 : BinaryPrimitives.ReadInt64BigEndian(buf);
@@ -137,7 +116,7 @@ public static class PacketProtocol
     {
         long len = ReadInt(stream);
         byte[] data = new byte[len];
-        ReadExact(stream, data);
+        stream.ReadExactly(data);
         return Encoding.UTF8.GetString(data);
     }
 
@@ -174,7 +153,7 @@ public static class PacketProtocol
     {
         long len = ReadInt(stream);
         byte[] data = new byte[len];
-        ReadExact(stream, data);
+        stream.ReadExactly(data);
         return data;
     }
 }

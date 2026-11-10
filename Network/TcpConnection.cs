@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright (c) 2026 1R1an1 */
 using System;
-using System.Buffers.Binary;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -28,28 +27,10 @@ public static class TcpConnection
     /// <param name="connectionTimeout">Tiempo máximo de espera para establecer la conexión TCP, en milisegundos.</param>
     /// <returns>El <see cref="TcpClient"/> y el <see cref="Stream"/> ya autenticados.</returns>
     /// <exception cref="TimeoutException">Si no se establece la conexión TCP dentro del tiempo límite.</exception>
-    /// <exception cref="IOException">Si el servidor rechaza el handshake o cierra la conexión durante la autenticación.</exception>
+    /// <exception cref="AuthenticationException">Si el servidor rechaza el handshake.</exception>
+    /// <exception cref="IOException">Si el servidor cierra la conexión durante la autenticación.</exception>
     public static async Task<(TcpClient Client, Stream Stream)> ConnectAsync(string host, int port, string password = null, bool enableTLS = true, uint connectionTimeout = 10000)
-    {
-        password ??= TcpServer.DefaultPassword;
-
-        var client = new TcpClient();
-
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(connectionTimeout));
-        try { await client.ConnectAsync(host, port, timeout.Token); }
-        catch (OperationCanceledException) { client.Dispose(); throw new TimeoutException(); }
-
-        Stream stream = client.GetStream();
-        if (enableTLS)
-        {
-            var sslStream = new SslStream(stream, false, new RemoteCertificateValidationCallback((_, _, _, _) => true), null);
-            await sslStream.AuthenticateAsClientAsync(host, null, SslProtocols.Tls12 | SslProtocols.Tls13, false);
-            stream = sslStream;
-        }
-
-        PasswordHandShake(client, stream, password);
-        return (client, stream);
-    }
+     => await InternalConnectAsync(host, port, null, null, password ??= TcpServer.DefaultPassword, enableTLS, AuthMode.PasswordChallenge, connectionTimeout);
 
     /// <summary>
     /// Conecta a un servidor con handshake asimétrico ECDSA P-256 DER ASN.1 usando la clave privada del cliente.
@@ -60,8 +41,12 @@ public static class TcpConnection
     /// <param name="connectionTimeout">Tiempo máximo de espera para establecer la conexión TCP, en milisegundos.</param>
     /// <returns>El <see cref="TcpClient"/> y el <see cref="Stream"/> ya autenticados.</returns>
     /// <exception cref="TimeoutException">Si no se establece la conexión TCP dentro del tiempo límite.</exception>
-    /// <exception cref="IOException">Si el servidor rechaza el handshake o cierra la conexión durante la autenticación.</exception>
+    /// <exception cref="AuthenticationException">Si el servidor rechaza el handshake.</exception>
+    /// <exception cref="IOException">Si el servidor cierra la conexión durante la autenticación.</exception>
     public static async Task<(TcpClient Client, Stream Stream)> ConnectAsync(string host, int port, byte[] clientFingerprint, Func<byte[]> loadPrivateKey, bool enableTLS = true, uint connectionTimeout = 10000)
+        => await InternalConnectAsync(host, port, clientFingerprint, loadPrivateKey, null, enableTLS, AuthMode.AsymmetricKeys, connectionTimeout);
+
+    private static async Task<(TcpClient Client, Stream Stream)> InternalConnectAsync(string host, int port, byte[] clientFingerprint = null, Func<byte[]> loadPrivateKey = null, string password = null, bool enableTLS = true, AuthMode mode = AuthMode.PasswordChallenge, uint connectionTimeout = 10000)
     {
         var client = new TcpClient();
 
@@ -76,8 +61,8 @@ public static class TcpConnection
             await sslStream.AuthenticateAsClientAsync(host, null, SslProtocols.Tls12 | SslProtocols.Tls13, false);
             stream = sslStream;
         }
-
-        KeysHandShake(client, stream, clientFingerprint, loadPrivateKey);
+        if (mode == AuthMode.PasswordChallenge) PasswordHandShake(client, stream, password);
+        else if (mode == AuthMode.AsymmetricKeys) KeysHandShake(client, stream, clientFingerprint, loadPrivateKey);
         return (client, stream);
     }
 
@@ -93,7 +78,7 @@ public static class TcpConnection
 
             // 1. Leer challenge (16 bytes random del server) sobre el túnel encriptado
             Span<byte> challenge = stackalloc byte[16];
-            PacketProtocol.ReadExact(stream, challenge);
+            stream.ReadExactly(challenge);
 
             // 2. Calcular y mandar response: SHA-256(challenge + password)
             byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
@@ -107,16 +92,15 @@ public static class TcpConnection
             // 3. Leer confirmación (1 byte: 0x01 = OK).
             int b = stream.ReadByte();
             if (b != 0x01)
-                throw new AuthenticationException("El servidor cerró la conexión durante el handshake.");
-
-            client.ReceiveTimeout = 0;
+                throw new AuthenticationException("El servidor no aprobo la autenticacion.");
         }
         catch
         {
-            try { client.ReceiveTimeout = 0; } catch { }
-            try { client.Close(); } catch { }
+            client.Dispose();
+            stream.Dispose();
             throw;
         }
+        finally { client.ReceiveTimeout = 0; }
     }
 
     /// <summary>
@@ -136,7 +120,7 @@ public static class TcpConnection
 
             // 2. Leer challenge (32 bytes random del server) sobre el túnel encriptado
             Span<byte> challenge = stackalloc byte[32];
-            PacketProtocol.ReadExact(stream, challenge);
+            stream.ReadExactly(challenge);
 
             // 3. Cargar la privada y firmar con manejo seguro de memoria:
             //    - GCHandle.Alloc con Pinned evita que el GC mueva el array (no quedan copias viejas).
@@ -164,15 +148,14 @@ public static class TcpConnection
             // 5. Leer confirmación (1 byte: 0x01 = OK)
             int b = stream.ReadByte();
             if (b != 0x01)
-                throw new IOException("El servidor cerró la conexión durante el handshake.");
-
-            client.ReceiveTimeout = 0;
+                throw new AuthenticationException("El servidor no aprobo la autenticacion.");
         }
         catch
         {
-            try { client.ReceiveTimeout = 0; } catch { }
-            try { client.Close(); } catch { }
+            client.Dispose();
+            stream.Dispose();
             throw;
         }
+        finally { client.ReceiveTimeout = 0; }
     }
 }

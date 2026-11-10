@@ -210,6 +210,7 @@ public class TcpServer : IDisposable
         IPEndPoint ip = (IPEndPoint)client.Client.RemoteEndPoint ?? null;
         bool connectedEventSent = false;
         client.NoDelay = true;
+        client.SendTimeout = 5000;
 
         try
         {
@@ -305,7 +306,7 @@ public class TcpServer : IDisposable
 
             // 2. Leer respuesta (32 bytes SHA-256)
             Span<byte> response = stackalloc byte[32];
-            PacketProtocol.ReadExact(stream, response);
+            stream.ReadExactly(response);
 
             // 3. Calcular hash esperado: SHA-256(challenge + password)
             byte[] passwordBytes = Encoding.UTF8.GetBytes(Password);
@@ -317,13 +318,8 @@ public class TcpServer : IDisposable
 
             // 4. Comparar con FixedTimeEquals para evitar timing attacks
             bool ok = CryptographicOperations.FixedTimeEquals(hash, response);
-
             if (!ok)
-            {
-                client.ReceiveTimeout = 0;
-                OnAuthFail?.Invoke(client);
-                return false;
-            }
+                throw new AuthenticationException();
 
             // 5. Mandar OK (1 byte) y dejar el socket abierto
             stream.WriteByte(0x01);
@@ -332,8 +328,7 @@ public class TcpServer : IDisposable
         }
         catch
         {
-            // Timeout, socket cerrado, lo que sea → auth falló, cerrar silenciosamente
-            try { if (client != null) client.ReceiveTimeout = 0; } catch { }
+            client.ReceiveTimeout = 0;
             OnAuthFail?.Invoke(client);
             return false;
         }
@@ -366,16 +361,12 @@ public class TcpServer : IDisposable
 
             // 1. Leer fingerprint del cliente (32 bytes)
             Span<byte> fingerprint = stackalloc byte[32];
-            PacketProtocol.ReadExact(stream, fingerprint);
+            stream.ReadExactly(fingerprint);
 
             // 2. Resolver pública por fingerprint
             string fpHex = Convert.ToHexStringLower(fingerprint);
             if (!AuthorizedPublicKeys.TryGetValue(fpHex, out byte[] pubKeyBytes))
-            {
-                client.ReceiveTimeout = 0;
-                OnAuthFail?.Invoke(client);
-                return (false, null);
-            }
+                throw new AuthenticationException();
 
             // 3. Generar y mandar challenge (32 bytes random)
             Span<byte> challenge = stackalloc byte[32];
@@ -384,17 +375,13 @@ public class TcpServer : IDisposable
 
             // 4. Leer [4 bytes length little-endian][firma]
             Span<byte> lenBuf = stackalloc byte[4];
-            PacketProtocol.ReadExact(stream, lenBuf);
+            stream.ReadExactly(lenBuf);
             int sigLen = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
             if (sigLen is <= 0 or > 256)
-            {
-                client.ReceiveTimeout = 0;
-                OnAuthFail?.Invoke(client);
-                return (false, null);
-            }
+                throw new AuthenticationException();
 
             byte[] signature = new byte[sigLen];
-            PacketProtocol.ReadExact(stream, signature);
+            stream.ReadExactly(signature);
 
             // 5. Validar firma con la pública del cliente
             using var ecdsa = ECDsa.Create();
@@ -402,11 +389,7 @@ public class TcpServer : IDisposable
             bool ok = ecdsa.VerifyData(challenge, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
 
             if (!ok)
-            {
-                client.ReceiveTimeout = 0;
-                OnAuthFail?.Invoke(client);
-                return (false, null);
-            }
+                throw new AuthenticationException();
 
             // 6. Mandar OK (1 byte)
             stream.WriteByte(0x01);
@@ -415,7 +398,7 @@ public class TcpServer : IDisposable
         }
         catch
         {
-            try { if (client != null) client.ReceiveTimeout = 0; } catch { }
+            client.ReceiveTimeout = 0;
             OnAuthFail?.Invoke(client);
             return (false, null);
         }
